@@ -2,3 +2,4 @@
 *.yaml text eol=lf
 *.yml text eol=lf
 .env.example text eol=lf
+tests/fixtures/os-release.* text eol=lf

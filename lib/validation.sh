@@ -16,6 +16,43 @@ validation_require_keys() {
   fi
 }
 
+validation_is_positive_integer() {
+  local value="$1"
+  [[ "${value}" =~ ^[0-9]+$ && "${value}" -gt 0 ]]
+}
+
+validation_value_at_least() {
+  local actual="$1"
+  local minimum="$2"
+
+  validation_is_positive_integer "${actual}" &&
+    validation_is_positive_integer "${minimum}" &&
+    ((actual >= minimum))
+}
+
+validation_is_supported_ubuntu_version() {
+  local version="$1"
+
+  case "${version}" in
+    22.04 | 24.04) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+validation_is_common_server_architecture() {
+  local architecture="$1"
+
+  case "${architecture}" in
+    x86_64 | amd64 | aarch64 | arm64) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+validation_is_http_url() {
+  local url="$1"
+  [[ "${url}" =~ ^https?://[^[:space:]]+$ ]]
+}
+
 validation_validate_base_config() {
   if [[ "${CONFIG_LOADED}" != "true" ]]; then
     log_warn "Base configuration validation skipped because no .env file is loaded."

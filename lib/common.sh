@@ -11,6 +11,10 @@ log_info() {
   log_message "INFO" "$@"
 }
 
+log_ok() {
+  log_message "OK" "$@"
+}
+
 log_warn() {
   log_message "WARN" "$@" >&2
 }
@@ -19,9 +23,24 @@ log_error() {
   log_message "ERROR" "$@" >&2
 }
 
+exit_with_error() {
+  local message="${1:-Unexpected installer error.}"
+  local exit_code="${2:-1}"
+
+  log_error "${message}"
+  exit "${exit_code}"
+}
+
 die() {
-  log_error "$@"
-  return 1
+  exit_with_error "$@"
+}
+
+command_exists() {
+  command -v "$1" >/dev/null 2>&1
+}
+
+file_is_readable() {
+  [[ -f "$1" && -r "$1" ]]
 }
 
 run_step() {
@@ -30,5 +49,5 @@ run_step() {
 
   log_info "Starting step: ${step_name}"
   "${function_name}"
-  log_info "Finished step: ${step_name}"
+  log_ok "Finished step: ${step_name}"
 }
