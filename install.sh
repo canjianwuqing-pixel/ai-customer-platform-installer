@@ -123,7 +123,6 @@ run_install_command() {
   domains_load
   secrets_ensure
   admin_prepare_credentials
-  setup_mark_admin_password_pending
   validation_validate_base_config
   register_core_steps
   run_registered_steps

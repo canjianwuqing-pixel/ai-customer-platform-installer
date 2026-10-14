@@ -8,6 +8,7 @@ ai_runtime/requirements.txt text eol=lf
 .env.example text eol=lf
 tests/fixtures/os-release.* text eol=lf
 tests/fixtures/docker-ready/bin/* text eol=lf
+tests/fixtures/admin-installer/bin/* text eol=lf
 templates/nginx/* text eol=lf
 templates/domain/* text eol=lf
 stacks/admin/Dockerfile text eol=lf

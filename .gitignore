@@ -21,8 +21,7 @@ __pycache__/
 
 # Installer runtime state and logs
 .installer-state
-.installer-admin-password-pending
-.installer-admin-password-once
+.installer-admin-password-*
 *.log
 runtime/
 backups/

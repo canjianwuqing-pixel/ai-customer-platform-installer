@@ -6,15 +6,47 @@ readonly -a INSTALLER_SECRET_KEYS=(
   REDIS_PASSWORD
   SECRET_KEY_BASE
   AI_SERVICE_INTERNAL_TOKEN
-  AI_ADMIN_SESSION_SECRET
-  AI_ADMIN_PASSWORD
   SERVICE_MANAGEMENT_TOKEN
 )
 
 declare -A INSTALLER_SECRET_KEY_COUNTS=()
 declare -A INSTALLER_GENERATED_SECRETS=()
 SECRETS_GENERATED_VALUE=""
-AI_ADMIN_PASSWORD_GENERATED="false"
+
+# One path for nonce creation, derivation and completion. Never create an
+# empty display marker: a once file must always contain a 32-byte nonce.
+secrets_admin_once_file() {
+  local once_file="${INSTALLER_ADMIN_ONCE_FILE:-${INSTALLER_ROOT}/.installer-admin-password-once}"
+  if [[ "$(basename -- "${once_file}")" != .installer-admin-password-once ]]; then
+    log_error "The administrator nonce file must be named .installer-admin-password-once."
+    return 1
+  fi
+  printf '%s\n' "${once_file}"
+}
+
+secrets_ensure_admin_nonce() {
+  local once_file
+  once_file="$(secrets_admin_once_file)" || return 1
+  if [[ -L "${once_file}" || (-e "${once_file}" && ! -f "${once_file}") ]]; then
+    log_error "Administrator nonce must be a regular file, not a symbolic link."
+    return 1
+  fi
+  if [[ ! -f "${once_file}" ]]; then
+    secrets_generate_hex 32 || return 1
+    # noclobber prevents replacing a nonce from an interrupted installation.
+    (umask 077; set -o noclobber; printf '%s' "${SECRETS_GENERATED_VALUE}" >"${once_file}") || {
+      log_error "Unable to save the administrator nonce."
+      return 1
+    }
+  fi
+  chmod 600 "${once_file}" || return 1
+  local nonce
+  nonce="$(<"${once_file}")"
+  if [[ ! "${nonce}" =~ ^[a-f0-9]{64}$ ]]; then
+    log_error "Administrator nonce is invalid; existing credentials were left unchanged."
+    return 1
+  fi
+}
 
 secrets_is_managed_key() {
   local candidate="$1"
@@ -34,10 +66,9 @@ secrets_required_bytes() {
 
   case "${key}" in
     SECRET_KEY_BASE) printf '%s\n' '64' ;;
-    DATABASE_PASSWORD | REDIS_PASSWORD | AI_SERVICE_INTERNAL_TOKEN | AI_ADMIN_SESSION_SECRET | SERVICE_MANAGEMENT_TOKEN)
+    DATABASE_PASSWORD | REDIS_PASSWORD | AI_SERVICE_INTERNAL_TOKEN | SERVICE_MANAGEMENT_TOKEN)
       printf '%s\n' '32'
       ;;
-    AI_ADMIN_PASSWORD) printf '%s\n' '16' ;;
     *) return 1 ;;
   esac
 }
@@ -179,12 +210,8 @@ secrets_ensure() {
 
   secrets_validate_config_file || return 1
   INSTALLER_GENERATED_SECRETS=()
-  AI_ADMIN_PASSWORD_GENERATED="false"
 
   for key in "${INSTALLER_SECRET_KEYS[@]}"; do
-    if [[ "${ADMIN_ENABLED:-false}" == true && "${key}" == AI_ADMIN_* ]]; then
-      continue
-    fi
     if ((INSTALLER_SECRET_KEY_COUNTS["${key}"] == 1)) && [[ -n "${!key:-}" ]]; then
       continue
     fi
@@ -197,9 +224,6 @@ secrets_ensure() {
     INSTALLER_GENERATED_SECRETS["${key}"]="${SECRETS_GENERATED_VALUE}"
     printf -v "${key}" '%s' "${SECRETS_GENERATED_VALUE}"
     export "${key}"
-    if [[ "${key}" == "AI_ADMIN_PASSWORD" ]]; then
-      AI_ADMIN_PASSWORD_GENERATED="true"
-    fi
     generated_count=$((generated_count + 1))
   done
 

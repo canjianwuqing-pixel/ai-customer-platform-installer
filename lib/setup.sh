@@ -8,10 +8,6 @@ setup_template_file() {
   printf '%s\n' "${INSTALLER_ENV_TEMPLATE:-${INSTALLER_ROOT}/.env.example}"
 }
 
-setup_admin_password_pending_file() {
-  printf '%s\n' "${INSTALLER_ADMIN_PASSWORD_PENDING_FILE:-${INSTALLER_ROOT}/.installer-admin-password-pending}"
-}
-
 setup_prompt_value() {
   local prompt_text="$1"
   local example_text="$2"
@@ -153,61 +149,12 @@ setup_configure_optional_modules() {
   log_info "AI Service images are configured; the optional module is enabled."
 }
 
-setup_mark_admin_password_pending() {
-  local pending_file
-  local temporary_file
-
-  if [[ "${AI_ADMIN_PASSWORD_GENERATED:-false}" != "true" ]]; then
-    return 0
-  fi
-
-  pending_file="$(setup_admin_password_pending_file)"
-  if [[ -L "${pending_file}" || (-e "${pending_file}" && ! -f "${pending_file}") ]]; then
-    log_error "Administrator password display marker must be a regular file."
-    return 1
-  fi
-  if [[ ! -d "$(dirname -- "${pending_file}")" || ! -w "$(dirname -- "${pending_file}")" ]]; then
-    log_error "Administrator password display marker directory is not writable."
-    return 1
-  fi
-
-  temporary_file="$(mktemp "${pending_file}.setup.XXXXXX")" || {
-    log_error "Unable to create the administrator password display marker."
-    return 1
-  }
-  if ! chmod 600 "${temporary_file}" || ! mv -f -- "${temporary_file}" "${pending_file}"; then
-    rm -f -- "${temporary_file}"
-    log_error "Unable to record the pending one-time administrator password display."
-    return 1
-  fi
-}
-
 setup_print_completion() {
-  local pending_file
-  local password_line="初始密码：已设置（仅在首次安装成功时显示）"
-
   if [[ "${ADMIN_ENABLED:-false}" == true ]]; then
     printf '\nAI Customer Platform 安装完成\n网站地址：\nhttps://%s\n' "${DOMAIN}"
     admin_print_completion
     printf '\n维护命令：\n./manage.sh status\n./manage.sh logs\n./manage.sh restart\n'
     return 0
-  fi
-
-  pending_file="$(setup_admin_password_pending_file)"
-  if [[ -L "${pending_file}" || (-e "${pending_file}" && ! -f "${pending_file}") ]]; then
-    log_error "Administrator password display marker must be a regular file."
-    return 1
-  fi
-  if [[ "${AI_SERVICE_ENABLED:-false}" == "true" && -f "${pending_file}" ]]; then
-    if [[ -z "${AI_ADMIN_PASSWORD:-}" ]]; then
-      log_error "Administrator password is unavailable for the one-time completion display."
-      return 1
-    fi
-    if ! rm -f -- "${pending_file}"; then
-      log_error "Unable to consume the one-time administrator password display marker."
-      return 1
-    fi
-    password_line="初始密码：${AI_ADMIN_PASSWORD}"
   fi
 
   if [[ "${AI_SERVICE_ENABLED:-false}" != "true" ]]; then
@@ -250,7 +197,7 @@ setup_print_completion() {
     '管理员账号：' \
     "${AI_ADMIN_USERNAME}" \
     '' \
-    "${password_line}" \
+    '密码：使用已有管理镜像的账号配置；启用统一后台请设置 ADMIN_ENABLED=true。' \
     '' \
     '请首次登录后修改密码。' \
     '' \

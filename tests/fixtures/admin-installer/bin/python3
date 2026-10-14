@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+# Only the fixture chooses a Python; production keeps using host python3.
+exec "${ADMIN_TEST_PYTHON:-/usr/bin/python3}" "$@"

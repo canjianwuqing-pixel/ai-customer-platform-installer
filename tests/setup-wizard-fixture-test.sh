@@ -12,7 +12,7 @@ readonly DOCKER_CALL_LOG="${TEST_TEMP_ROOT}/docker.log"
 readonly NGINX_CALL_LOG="${TEST_TEMP_ROOT}/nginx.log"
 readonly DOMAIN_CALL_LOG="${TEST_TEMP_ROOT}/domain.log"
 readonly CERTBOT_CALL_LOG="${TEST_TEMP_ROOT}/certbot.log"
-readonly PASSWORD_PENDING_FILE="${TEST_TEMP_ROOT}/admin-password-pending"
+readonly PASSWORD_ONCE_FILE="${TEST_TEMP_ROOT}/.installer-admin-password-once"
 
 cleanup() {
   local resolved_parent
@@ -35,7 +35,7 @@ trap cleanup EXIT
 
 export PATH="${TEST_ROOT}/tests/fixtures/secrets/bin:${TEST_ROOT}/tests/fixtures/docker-ready/bin:${PATH}"
 export CONFIG_FILE="${TEST_CONFIG}"
-export INSTALLER_ADMIN_PASSWORD_PENDING_FILE="${PASSWORD_PENDING_FILE}"
+export INSTALLER_ADMIN_ONCE_FILE="${PASSWORD_ONCE_FILE}"
 export SECRETS_CHMOD_LOG="${CHMOD_CALL_LOG}"
 export DOCKER_FIXTURE_LOG="${DOCKER_CALL_LOG}"
 export NGINX_CONFIG_ROOT="${TEST_TEMP_ROOT}/nginx"
@@ -81,9 +81,8 @@ read_config_value() {
   sed -n "s/^${key}=//p" "${TEST_CONFIG}"
 }
 
-readonly ADMIN_PASSWORD="$(read_config_value AI_ADMIN_PASSWORD)"
-if [[ ! "${ADMIN_PASSWORD}" =~ ^[0-9a-f]{32}$ ]]; then
-  printf '%s\n' 'The setup wizard did not generate a secure administrator password.' >&2
+if [[ -n "$(read_config_value AI_ADMIN_PASSWORD)" || -n "$(read_config_value ADMIN_PASSWORD_HASH)" ]]; then
+  printf '%s\n' 'A disabled Admin must not initialize credentials or legacy plaintext passwords.' >&2
   exit 1
 fi
 
@@ -92,8 +91,7 @@ for key in \
   REDIS_PASSWORD \
   SECRET_KEY_BASE \
   AI_SERVICE_INTERNAL_TOKEN \
-  SERVICE_MANAGEMENT_TOKEN \
-  AI_ADMIN_SESSION_SECRET; do
+  SERVICE_MANAGEMENT_TOKEN; do
   value="$(read_config_value "${key}")"
   if [[ -z "${value}" ]]; then
     printf 'The setup wizard left a required secret empty: %s\n' "${key}" >&2
@@ -127,7 +125,7 @@ for forbidden_output in \
   '请输入 OpenAI API Key：' \
   '请输入 AI 模型名称：' \
   'AI 管理后台：' \
-  "${ADMIN_PASSWORD}"; do
+  '初始密码（仅显示一次）：'; do
   if grep -Fq -- "${forbidden_output}" "${INSTALL_OUTPUT}"; then
     printf 'Unexpected installation output: %s\n' "${forbidden_output}" >&2
     exit 1
@@ -139,8 +137,8 @@ if grep -Fq -- 'stacks/ai-service/compose.yaml' "${DOCKER_CALL_LOG}"; then
   exit 1
 fi
 
-if [[ ! -f "${PASSWORD_PENDING_FILE}" ]]; then
-  printf '%s\n' 'The administrator password marker should remain pending until AI Service is enabled.' >&2
+if [[ -e "${PASSWORD_ONCE_FILE}" ]]; then
+  printf '%s\n' 'A disabled Admin must not create a password nonce.' >&2
   exit 1
 fi
 

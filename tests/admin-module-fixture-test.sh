@@ -19,7 +19,7 @@ trap cleanup EXIT
 trap 'printf "Admin module fixture failed at line %s.\n" "${LINENO}" >&2' ERR
 export INSTALLER_ROOT="${TEST_ROOT}"
 export CONFIG_FILE="${TEST_TEMP}/.env"
-export INSTALLER_ADMIN_ONCE_FILE="${TEST_TEMP}/password-once"
+export INSTALLER_ADMIN_ONCE_FILE="${TEST_TEMP}/.installer-admin-password-once"
 export DOCKER_FIXTURE_LOG="${TEST_TEMP}/docker.log"
 export PATH="${TEST_ROOT}/tests/fixtures/docker-ready/bin:${PATH}"
 source "${TEST_ROOT}/lib/common.sh"
@@ -125,18 +125,39 @@ AI_ADMIN_PASSWORD="" AI_ADMIN_SESSION_SECRET=""
 admin_prepare_credentials >"${TEST_TEMP}/fresh.log"
 readonly FRESH_HASH="${ADMIN_PASSWORD_HASH}"
 [[ "$(<"${INSTALLER_ADMIN_ONCE_FILE}")" =~ ^[a-f0-9]{64}$ ]]
+if [[ "${OSTYPE:-}" != msys* && "${OSTYPE:-}" != cygwin* &&
+  "$(/usr/bin/stat -c %a "${INSTALLER_ADMIN_ONCE_FILE}")" != 600 ]]; then exit 1; fi
 readonly FRESH_PASSWORD="$(admin_initial_password)"
 [[ "${FRESH_PASSWORD}" =~ ^[a-f0-9]{32}$ ]]
 if grep -Fq -- "${FRESH_PASSWORD}" "${CONFIG_FILE}" || grep -Fq -- "${FRESH_PASSWORD}" "${TEST_TEMP}/fresh.log"; then exit 1; fi
 admin_prepare_credentials >>"${TEST_TEMP}/fresh.log"
 [[ "${ADMIN_PASSWORD_HASH}" == "${FRESH_HASH}" ]]
 [[ "$(admin_initial_password)" == "${FRESH_PASSWORD}" ]]
+# A mismatched hash must neither reveal a password nor discard its nonce.
+if ADMIN_PASSWORD_HASH="pbkdf2_sha256:600000:00000000000000000000000000000000:0000000000000000000000000000000000000000000000000000000000000000" \
+  admin_print_completion >"${TEST_TEMP}/mismatched-hash.log" 2>&1; then
+  printf '%s\n' 'Completion accepted a mismatched password hash.' >&2; exit 1
+fi
+[[ -f "${INSTALLER_ADMIN_ONCE_FILE}" ]]
+if grep -Fq "${FRESH_PASSWORD}" "${TEST_TEMP}/mismatched-hash.log"; then exit 1; fi
+# Output failure must preserve the verified nonce for a later successful run.
+if (
+  printf() {
+    [[ "$1" != '初始密码（仅显示一次）：'* ]] || return 1
+    builtin printf "$@"
+  }
+  admin_print_completion
+) >"${TEST_TEMP}/failed-display.log" 2>&1; then
+  printf '%s\n' 'A failed initial password display was reported as successful.' >&2; exit 1
+fi
+[[ -f "${INSTALLER_ADMIN_ONCE_FILE}" ]]
+if grep -Fq "${FRESH_PASSWORD}" "${TEST_TEMP}/failed-display.log"; then exit 1; fi
 admin_print_completion >"${TEST_TEMP}/fresh-completion.log"
 grep -Fq "${FRESH_PASSWORD}" "${TEST_TEMP}/fresh-completion.log"
 [[ ! -e "${INSTALLER_ADMIN_ONCE_FILE}" ]]
 admin_print_completion >"${TEST_TEMP}/fresh-again.log"
 if grep -Fq "${FRESH_PASSWORD}" "${TEST_TEMP}/fresh-again.log"; then exit 1; fi
-if [[ "${OSTYPE:-}" != msys* && "${OSTYPE:-}" != cygwin* && "$(stat -c %a "${CONFIG_FILE}")" != 600 ]]; then exit 1; fi
+if [[ "${OSTYPE:-}" != msys* && "${OSTYPE:-}" != cygwin* && "$(/usr/bin/stat -c %a "${CONFIG_FILE}")" != 600 ]]; then exit 1; fi
 ADMIN_ENABLED=false
 nginx_render_template "${TEST_TEMP}/disabled.conf"
 if grep -Fq 'location = /admin' "${TEST_TEMP}/disabled.conf"; then exit 1; fi

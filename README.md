@@ -52,6 +52,7 @@ AI Service 和统一后台不是 Chatwoot 基础安装必选项。未配置 AI �
 认证与安全：
 
 - 初始密码由安全随机 nonce 与 Session Secret 经 HMAC 派生，再通过标准输入生成 PBKDF2-SHA256 哈希，`.env` 只保存 `ADMIN_PASSWORD_HASH`。旧密码仅用于迁移为这个账号，随后清空旧字段，不重新展示已知旧密码。安装未完成时，本地 `.installer-admin-password-once` 仅保存 nonce（不是密码），权限 `0600`、已忽略 Git；成功展示后删除，不进入备份。生成和哈希计算期间关闭 shell tracing，不记录初始密码；请不要录制终端输出。
+- nonce 的生成、读取、完成提示统一使用 `.installer-admin-password-once`；只在缺少 `ADMIN_PASSWORD_HASH` 时初始化，未启用后台时不提前生成旧式管理员密码或空展示标记。完成提示先验证派生密码与哈希一致，展示成功后再删除 nonce；校验/展示失败保留文件供重试，重复安装不会重新生成已有密码。若旧部署已经只有密码哈希而没有 nonce，哈希无法反推出密码，本修复不会静默重置现有账号；需要单独执行明确授权的密码重置流程。
 - 后台修改密码需校验当前密码，至少 16 字符；仅哈希写入管理数据卷的 `auth.sqlite3`。数据卷中的密码优先于 `.env` 的初始哈希，重新部署不会重置密码；恢复旧备份会恢复当时密码。
 - Session 为随机不透明 Cookie，数据库只存其摘要；默认一小时有效，登录轮换、退出撤销、修改密码撤销全部 Session。Cookie 使用 Secure、HttpOnly、SameSite=Strict，所有写请求验证 CSRF，登录失败有全局限速。仅支持 HTTPS 登录。
 - 浏览器使用 `/admin/api/*` + Session；后台服务端再用 `SERVICE_MANAGEMENT_TOKEN` 调用内部 `/management/*`。不返回 Token、环境变量、完整异常或维护脚本输出。原 `/chat` 和 `/management` Token 认证继续独立工作。
@@ -77,10 +78,13 @@ python3 -m venv runtime/admin-venv
 runtime/admin-venv/bin/python -m pip install -r platform_admin/requirements.txt -r ai_runtime/requirements.txt
 ADMIN_TEST_PYTHON="$PWD/runtime/admin-venv/bin/python" bash tests/admin-fixture-test.sh
 ADMIN_TEST_PYTHON="$PWD/runtime/admin-venv/bin/python" bash tests/admin-module-fixture-test.sh
+ADMIN_TEST_PYTHON="$PWD/runtime/admin-venv/bin/python" bash tests/admin-installer-fixture-test.sh
 runtime/admin-venv/bin/python tests/admin_compose_check.py
 ```
 
 可用 `ADMIN_TEST_PYTHON` 指定 fixture 的 Python、`TEST_COMPOSE_BINARY` 指定独立 Compose 可执行文件；检查只输出结论，不打印解析后的敏感环境配置。安全属性参考 [Starlette Cookie 接口](https://starlette.dev/responses/) 和 [Python 密码派生函数](https://docs.python.org/3.12/library/hashlib.html#hashlib.pbkdf2_hmac)。
+
+`admin-installer-fixture-test.sh` 在隔离副本中执行真实 `install.sh` 入口，覆盖 Ubuntu 22.04 / 24.04 元数据、首次成功、重复安装、失败后续跑及完成提示；Docker、Nginx、Certbot、systemd 等外部操作使用替身，宿主写操作限制在临时目录，不是实际服务器部署测试。
 
 ## Service Management Core
 
