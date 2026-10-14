@@ -3,16 +3,31 @@ set -Eeuo pipefail
 
 readonly TEST_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly COMPOSE_FILE="${TEST_ROOT}/stacks/chatwoot/compose.yaml"
-readonly DOCKER_CALL_LOG="$(mktemp)"
+readonly TEST_RUNTIME_PARENT="${TEST_ROOT}/runtime/tests"
+mkdir -p -- "${TEST_RUNTIME_PARENT}"
+readonly TEST_TEMP_ROOT="$(mktemp -d "${TEST_RUNTIME_PARENT}/chatwoot-fixture.XXXXXX")"
+readonly DOCKER_CALL_LOG="${TEST_TEMP_ROOT}/docker.log"
+readonly NGINX_CALL_LOG="${TEST_TEMP_ROOT}/nginx.log"
+: >"${DOCKER_CALL_LOG}"
 
 cleanup() {
-  rm -f -- "${DOCKER_CALL_LOG}"
+  local resolved_parent
+  local resolved_temp
+
+  resolved_parent="$(cd -- "${TEST_RUNTIME_PARENT}" && pwd -P)"
+  resolved_temp="$(cd -- "${TEST_TEMP_ROOT}" && pwd -P)"
+  case "${resolved_temp}" in
+    "${resolved_parent}"/chatwoot-fixture.*) rm -rf -- "${resolved_temp}" ;;
+    *) printf 'Refusing to remove unexpected fixture path: %s\n' "${resolved_temp}" >&2 ;;
+  esac
 }
 trap cleanup EXIT
 
 export PATH="${TEST_ROOT}/tests/fixtures/docker-ready/bin:${PATH}"
 export CONFIG_FILE="${TEST_ROOT}/tests/fixtures/chatwoot.test.env"
 export DOCKER_FIXTURE_LOG="${DOCKER_CALL_LOG}"
+export NGINX_CONFIG_ROOT="${TEST_TEMP_ROOT}/nginx"
+export NGINX_FIXTURE_LOG="${NGINX_CALL_LOG}"
 export SYSTEM_OS_RELEASE_FILE="${TEST_ROOT}/tests/fixtures/os-release.ubuntu-24.04"
 export SYSTEM_NETWORK_TIMEOUT_SECONDS="2"
 

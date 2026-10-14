@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
+if [[ -n "${NGINX_FIXTURE_LOG:-}" ]]; then
+  printf 'systemctl %s\n' "$*" >>"${NGINX_FIXTURE_LOG}"
+fi
+
 if [[ "${1:-}" == "is-active" ]]; then
   exit 0
 fi

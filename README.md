@@ -4,15 +4,16 @@
 
 ## 当前阶段
 
-当前仓库已经实现前三个基础模块，包括：
+当前仓库已经实现四个基础模块，包括：
 
 - 安装入口和模块注册机制；
 - 统一日志、配置读取、状态记录和基础校验接口；
 - System 环境检测与 Docker 官方安装流程；
 - Chatwoot、PostgreSQL、Redis、Sidekiq 的 Docker Compose Stack；
+- Chatwoot 的 Nginx HTTP 反向代理与 WebSocket 支持；
 - 配置模板、fixture 测试和文档目录。
 
-系统检测模块提供只读的 Ubuntu 版本、权限、CPU、内存、磁盘、架构和网络检查。Docker 模块可以检测现有环境，并在缺失时通过 Docker 官方 APT 仓库安装 Engine、CLI、containerd、Buildx 和 Compose Plugin。Chatwoot 模块会校验 Compose 配置、拉取固定版本镜像、先启动并等待 PostgreSQL/Redis、执行 `db:chatwoot_prepare`，再启动 Rails 与 Sidekiq。Nginx 和 SSL 模块仍是安全的 no-op 占位实现。
+系统检测模块提供只读的 Ubuntu 版本、权限、CPU、内存、磁盘、架构和网络检查。Docker 模块可以检测现有环境，并在缺失时通过 Docker 官方 APT 仓库安装 Engine、CLI、containerd、Buildx 和 Compose Plugin。Chatwoot 模块会校验 Compose 配置、拉取固定版本镜像、先启动并等待 PostgreSQL/Redis、执行 `db:chatwoot_prepare`，再启动 Rails 与 Sidekiq。Nginx 模块使用独立站点模板配置 HTTP、转发头和 `/cable` WebSocket 代理，并在安全切换配置后 reload。SSL 模块仍是安全的 no-op 占位实现。
 
 ## 配置原则
 
@@ -48,7 +49,7 @@ Chatwoot、pgvector/PostgreSQL 和 Redis 镜像均通过 `.env` 使用明确版�
 bash install.sh
 ```
 
-该命令会执行只读系统检测，在 Docker 环境缺失时进入 Docker 官方安装流程，并部署 Chatwoot Stack。Nginx 和 SSL 步骤目前仍只输出占位日志，因此这一阶段只提供本机绑定的 Chatwoot HTTP 服务。
+该命令会执行只读系统检测，在 Docker 环境缺失时进入 Docker 官方安装流程，部署 Chatwoot Stack，并安装及配置 Nginx HTTP 反向代理。SSL 步骤目前仍只输出占位日志，因此这一阶段不提供 HTTPS。
 系统检测只支持 Ubuntu 22.04 和 24.04；在其他操作系统上运行会输出检测错误并安全退出。
 
 ## 后续扩展方向
