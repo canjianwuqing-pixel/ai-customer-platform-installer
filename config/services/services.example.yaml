@@ -1,19 +1,12 @@
 # Generic, disabled example. Copy this structure to local.yaml and keep the
-# local file out of Git. Secret values must be referenced, never embedded.
+# local file out of Git. Values ending in _config are identifiers that refer
+# to future managed configuration objects; they are not secrets or API keys.
 version: 1
 services:
-  - service:
-      id: example-service
-      name: Example Service
-      enabled: false
-    ai:
-      model: ""
-      prompt: ""
-    knowledge:
-      source: ""
-    channels:
-      enabled: []
-    integration:
-      provider: ""
-      config:
-        credential_ref: ""
+  - id: example-service
+    name: Example Service
+    enabled: false
+    ai_config: ""
+    prompt_config: ""
+    knowledge_config: ""
+    channel_config: ""

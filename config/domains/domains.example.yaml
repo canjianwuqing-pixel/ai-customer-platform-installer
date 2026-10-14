@@ -1,0 +1,8 @@
+# Generic, disabled example. The service_id must reference an entry loaded
+# from config/services. Use local.yaml for actual domains and keep it private.
+version: 1
+domains:
+  - domain: service.example.test
+    service_id: example-service
+    enabled: false
+    default_entry: false

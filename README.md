@@ -38,13 +38,17 @@ Chatwoot、pgvector/PostgreSQL 和 Redis 镜像均通过 `.env` 使用明确版�
 
 AI Service 不是基础安装必选项。未设置 `AI_SERVICE_IMAGE` 时，安装器会跳过全部 AI 部署步骤并在完成时提示可后续启用。高级用户可在 `.env` 中同时设置 `AI_SERVICE_IMAGE` 和 `AI_ADMIN_IMAGE`；两个镜像都必须使用固定标签或 SHA-256 digest，并遵守 Compose 中声明的环境变量与健康端点契约。OpenAI API Key 和模型选择改由 AI 管理后台配置，不属于安装必填项。内部 Token、管理密码和会话 Secret 仍只保存在本地 `.env`，安装器不会输出其值。
 
-## 客服实例配置层
+## Service Management Core
 
-客服实例（Service Instance）是平台后续扩展多 AI、多消息入口、多外部平台连接和多知识库的基础抽象。每个实例使用通用字段独立描述实例身份、启用状态、AI 模型与系统提示词、知识来源、消息入口以及外部集成配置，不绑定任何品牌、域名、平台或模型。
+Service Management Core 是未来统一 AI 客服管理后台的数据基础。它将入口关系拆分为“域名 → 客服实例 → AI 配置 / 提示词配置 / 知识库配置 / 渠道配置”，只保存通用标识和配置引用，不绑定任何品牌、真实域名、模型或外部平台。
 
-仓库内的 `config/services/services.yaml` 是空的默认配置，`config/services/services.example.yaml` 提供禁用状态的通用结构示例。实际配置写入 `config/services/local.yaml`；该文件已被 Git 忽略，并且必须使用 `0600` 或更严格的权限。加载优先级为用户配置覆盖默认配置，相同 `service.id` 的用户字段会覆盖默认字段，同时允许增加其他实例。
+客服实例默认配置位于 `config/services/services.yaml`，字段为 `id`、`name`、`enabled`、`ai_config`、`prompt_config`、`knowledge_config` 和 `channel_config`。域名绑定默认配置位于 `config/domains/domains.yaml`，字段为 `domain`、`service_id`、`enabled` 和 `default_entry`。仓库中的两个默认文件均为空；对应的 `*.example.yaml` 只展示禁用的通用结构。
 
-`lib/services.sh` 提供配置加载、校验、实例 ID 列表、按 ID 获取完整配置和读取指定字段的接口。解析器拒绝密码、Token、API Key、私钥等敏感字段；外部凭据应使用 `credential_ref` 等引用，由未来的安全凭据层解析。当前安装流程只加载并验证实例配置，不创建运行服务，也不实现管理后台 UI、多租户、多平台连接、多域名或 AI 模型调用。
+实际配置分别写入 `config/services/local.yaml` 和 `config/domains/local.yaml`。两个文件均已被 Git 忽略，且必须使用 `0600` 或更严格的权限。加载顺序为默认配置后加载用户配置：相同客服实例 ID 或域名的用户字段覆盖默认字段，也可以追加新记录。域名加载时会验证 `service_id` 引用存在，启用的域名只能绑定启用的客服实例，并且最多只能有一个启用的默认入口。
+
+`lib/services.sh` 提供客服实例加载、校验、ID 列表和按 ID 查询接口；`lib/domains.sh` 提供域名绑定加载、关系校验和按域名解析客服实例接口。配置结构不包含 API Key、密码或 Token 字段，也不会输出配置内容。当前安装流程仅加载和验证数据，不创建域名、服务或运行时资源，不实现管理后台 UI、DNS、SSL、Cloudflare 或外部平台接入。
+
+这一核心层为未来统一后台管理多 AI、多域名、多入口、多平台以及多知识库关系保留了稳定边界。
 
 备份版本保存在 `BACKUP_DIR`，目录和文件分别限制为仅所有者可访问。每个版本包含 Chatwoot PostgreSQL dump、Chatwoot storage、AI Service 与管理后台持久化数据、受保护的 `.env`、两套 Compose 文件、Nginx 站点配置、SSL 配置记录、版本 manifest 和 SHA-256 校验清单。证书私钥不会复制进备份；`.env` 含真实 Secret，因此备份目录仍应放在受控磁盘中。当前仅支持本地备份，不上传云存储，也不创建定时任务。
 

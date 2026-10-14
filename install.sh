@@ -12,7 +12,9 @@ source "${INSTALLER_ROOT}/lib/secrets.sh"
 source "${INSTALLER_ROOT}/lib/state.sh"
 source "${INSTALLER_ROOT}/lib/validation.sh"
 source "${INSTALLER_ROOT}/lib/setup.sh"
+source "${INSTALLER_ROOT}/lib/records.sh"
 source "${INSTALLER_ROOT}/lib/services.sh"
+source "${INSTALLER_ROOT}/lib/domains.sh"
 
 readonly -a MODULE_FILES=(
   "modules/system/check.sh"
@@ -106,9 +108,10 @@ on_error() {
 run_install_command() {
   setup_prepare_configuration
   setup_configure_optional_modules
-  # Configuration-only initialization point for future service-instance
-  # runtimes. No service, channel, integration, or model is created here.
+  # Configuration-only initialization point for the future management core.
+  # No domain, service, channel, knowledge source, or model is created here.
   services_load
+  domains_load
   secrets_ensure
   setup_mark_admin_password_pending
   validation_validate_base_config

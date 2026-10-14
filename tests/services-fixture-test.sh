@@ -23,6 +23,7 @@ export INSTALLER_ROOT="${TEST_ROOT}"
 export PATH="${TEST_ROOT}/tests/fixtures/services/bin:${PATH}"
 source "${TEST_ROOT}/lib/common.sh"
 source "${TEST_ROOT}/lib/validation.sh"
+source "${TEST_ROOT}/lib/records.sh"
 source "${TEST_ROOT}/lib/services.sh"
 
 readonly EMPTY_CONFIG="${TEST_TEMP_ROOT}/empty.yaml"
@@ -30,7 +31,7 @@ readonly SINGLE_CONFIG="${TEST_TEMP_ROOT}/single.yaml"
 readonly DEFAULT_CONFIG="${TEST_TEMP_ROOT}/defaults.yaml"
 readonly OVERRIDE_CONFIG="${TEST_TEMP_ROOT}/override.yaml"
 readonly INVALID_CONFIG="${TEST_TEMP_ROOT}/invalid.yaml"
-readonly SENSITIVE_CONFIG="${TEST_TEMP_ROOT}/sensitive.yaml"
+readonly UNKNOWN_FIELD_CONFIG="${TEST_TEMP_ROOT}/unknown-field.yaml"
 readonly UNSAFE_CONFIG="${TEST_TEMP_ROOT}/unsafe.yaml"
 
 printf '%s\n' \
@@ -46,7 +47,7 @@ if [[ "${SERVICES_CONFIG_LOADED}" != "true" ]] ||
 fi
 
 services_load "${TEST_ROOT}/config/services/services.example.yaml" "" >/dev/null
-if [[ "$(services_get_value example-service service.enabled)" != "false" ]]; then
+if [[ "$(services_get_value example-service enabled)" != "false" ]]; then
   printf '%s\n' 'The repository service configuration example is not parseable.' >&2
   exit 1
 fi
@@ -54,90 +55,57 @@ fi
 cat >"${SINGLE_CONFIG}" <<'YAML'
 version: 1
 services:
-  - service:
-      id: general-service
-      name: General Service
-      enabled: true
-    ai:
-      model: generic-model
-      prompt: "Respond using the configured context."
-    knowledge:
-      source: primary-knowledge
-    channels:
-      enabled: [web, api]
-    integration:
-      provider: generic-provider
-      config:
-        endpoint: https://integration.example.test/events
-        credential_ref: GENERIC_PROVIDER_CREDENTIAL
+  - id: general-service
+    name: General Service
+    enabled: true
+    ai_config: standard-ai
+    prompt_config: default-prompt
+    knowledge_config: primary-knowledge
+    channel_config: web-entry
 YAML
 chmod 600 "${SINGLE_CONFIG}"
 
 services_load "${EMPTY_CONFIG}" "${SINGLE_CONFIG}" >/dev/null
 services_get_instance general-service
-if [[ "${SERVICE_INSTANCE_CONFIG[service.name]}" != "General Service" ]] ||
-  [[ "${SERVICE_INSTANCE_CONFIG[ai.model]}" != "generic-model" ]] ||
-  [[ "${SERVICE_INSTANCE_CONFIG[channels.enabled]}" != "[web, api]" ]] ||
-  [[ "${SERVICE_INSTANCE_CONFIG[integration.config.credential_ref]}" != \
-    "GENERIC_PROVIDER_CREDENTIAL" ]]; then
+if [[ "${SERVICE_INSTANCE_CONFIG[name]}" != "General Service" ]] ||
+  [[ "${SERVICE_INSTANCE_CONFIG[ai_config]}" != "standard-ai" ]] ||
+  [[ "${SERVICE_INSTANCE_CONFIG[channel_config]}" != "web-entry" ]]; then
   printf '%s\n' 'Parsed service instance values do not match the fixture.' >&2
-  exit 1
-fi
-
-if [[ "$(services_get_value general-service ai.prompt)" != \
-  'Respond using the configured context.' ]]; then
-  printf '%s\n' 'Unable to retrieve a service instance field by id.' >&2
   exit 1
 fi
 
 cat >"${DEFAULT_CONFIG}" <<'YAML'
 version: 1
 services:
-  - service:
-      id: shared-service
-      name: Shared Service
-      enabled: true
-    ai:
-      model: default-model
-      prompt: default-prompt
-    knowledge:
-      source: default-knowledge
-    channels:
-      enabled: [web]
-    integration:
-      provider: ""
-      config: {}
+  - id: shared-service
+    name: Shared Service
+    enabled: true
+    ai_config: default-ai
+    prompt_config: default-prompt
+    knowledge_config: default-knowledge
+    channel_config: default-channel
 YAML
 
 cat >"${OVERRIDE_CONFIG}" <<'YAML'
 version: 1
 services:
-  - service:
-      id: shared-service
-    ai:
-      model: user-model
-  - service:
-      id: second-service
-      name: Second Service
-      enabled: false
-    ai:
-      model: ""
-      prompt: ""
-    knowledge:
-      source: second-knowledge
-    channels:
-      enabled: []
-    integration:
-      provider: ""
-      config: {}
+  - id: shared-service
+    ai_config: user-ai
+  - id: second-service
+    name: Second Service
+    enabled: false
+    ai_config: ""
+    prompt_config: ""
+    knowledge_config: second-knowledge
+    channel_config: ""
 YAML
 chmod 600 "${OVERRIDE_CONFIG}"
 
 services_load "${DEFAULT_CONFIG}" "${OVERRIDE_CONFIG}" >/dev/null
 if ((${#SERVICE_INSTANCE_IDS[@]} != 2)) ||
-  [[ "$(services_get_value shared-service ai.model)" != "user-model" ]] ||
-  [[ "$(services_get_value shared-service ai.prompt)" != "default-prompt" ]] ||
-  [[ "$(services_get_value second-service service.enabled)" != "false" ]]; then
+  [[ "$(services_get_value shared-service ai_config)" != "user-ai" ]] ||
+  [[ "$(services_get_value shared-service prompt_config)" != "default-prompt" ]] ||
+  [[ "$(services_get_value second-service enabled)" != "false" ]]; then
   printf '%s\n' 'Multi-instance loading or user-over-default priority failed.' >&2
   exit 1
 fi
@@ -145,10 +113,9 @@ fi
 cat >"${INVALID_CONFIG}" <<'YAML'
 version: 1
 services:
-  - service:
-      id: incomplete-service
-      name: Incomplete Service
-      enabled: maybe
+  - id: incomplete-service
+    name: Incomplete Service
+    enabled: maybe
 YAML
 chmod 600 "${INVALID_CONFIG}"
 if services_load "${EMPTY_CONFIG}" "${INVALID_CONFIG}" >/dev/null 2>&1; then
@@ -156,28 +123,21 @@ if services_load "${EMPTY_CONFIG}" "${INVALID_CONFIG}" >/dev/null 2>&1; then
   exit 1
 fi
 
-cat >"${SENSITIVE_CONFIG}" <<'YAML'
+cat >"${UNKNOWN_FIELD_CONFIG}" <<'YAML'
 version: 1
 services:
-  - service:
-      id: unsafe-service
-      name: Unsafe Service
-      enabled: false
-    ai:
-      model: ""
-      prompt: ""
-    knowledge:
-      source: ""
-    channels:
-      enabled: []
-    integration:
-      provider: generic-provider
-      config:
-        api_key: ""
+  - id: unsafe-service
+    name: Unsafe Service
+    enabled: false
+    ai_config: ""
+    prompt_config: ""
+    knowledge_config: ""
+    channel_config: ""
+    api_key: forbidden
 YAML
-chmod 600 "${SENSITIVE_CONFIG}"
-if services_load "${EMPTY_CONFIG}" "${SENSITIVE_CONFIG}" >/dev/null 2>&1; then
-  printf '%s\n' 'Plaintext secret fields were accepted in service configuration.' >&2
+chmod 600 "${UNKNOWN_FIELD_CONFIG}"
+if services_load "${EMPTY_CONFIG}" "${UNKNOWN_FIELD_CONFIG}" >/dev/null 2>&1; then
+  printf '%s\n' 'A secret-bearing unsupported field was accepted.' >&2
   exit 1
 fi
 
@@ -189,4 +149,4 @@ if services_load "${EMPTY_CONFIG}" "${UNSAFE_CONFIG}" >/dev/null 2>&1; then
   exit 1
 fi
 
-printf '%s\n' 'Service instance parsing, priority, multi-instance, empty, and invalid fixture tests passed.'
+printf '%s\n' 'Service parsing, priority, multi-instance, empty, invalid, and safety fixture tests passed.'

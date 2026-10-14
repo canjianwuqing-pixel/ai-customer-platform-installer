@@ -4,7 +4,6 @@ set -Eeuo pipefail
 SERVICES_CONFIG_LOADED="false"
 SERVICES_DEFAULT_CONFIG_FILE=""
 SERVICES_USER_CONFIG_FILE=""
-SERVICES_DECODED_VALUE=""
 
 declare -a SERVICE_INSTANCE_IDS=()
 declare -A SERVICE_INSTANCE_VALUES=()
@@ -31,62 +30,25 @@ services_reset() {
   SERVICE_INSTANCE_CONFIG=()
 }
 
-services_decode_scalar() {
-  local value="$1"
-  local first_character=""
-  local last_character=""
-
-  value="${value#"${value%%[![:space:]]*}"}"
-  value="${value%"${value##*[![:space:]]}"}"
-  SERVICES_DECODED_VALUE=""
-
-  if [[ -z "${value}" ]]; then
-    return 0
-  fi
-
-  first_character="${value:0:1}"
-  last_character="${value: -1}"
-  if [[ "${first_character}" == '"' || "${first_character}" == "'" ]]; then
-    if ((${#value} < 2)) || [[ "${last_character}" != "${first_character}" ]]; then
-      return 1
-    fi
-    value="${value:1:${#value}-2}"
-  elif [[ "${last_character}" == '"' || "${last_character}" == "'" ]]; then
-    return 1
-  fi
-
-  case "${value}" in
-    '|' | '>' | '|-' | '>-' | '|+' | '>+') return 1 ;;
-  esac
-
-  [[ "${value}" != *$'\n'* && "${value}" != *$'\r'* ]] || return 1
-  SERVICES_DECODED_VALUE="${value}"
-}
-
-services_path_is_sensitive() {
-  local path="$1"
-  local component
-  local -a components=()
-
-  IFS='.' read -r -a components <<<"${path,,}"
-  for component in "${components[@]}"; do
-    if [[ "${component}" =~ (^|[_-])(api[_-]?key|password|secret|token|private[_-]?key)($|[_-]) ]]; then
+services_field_is_supported() {
+  case "$1" in
+    id | name | enabled | ai_config | prompt_config | knowledge_config | channel_config)
       return 0
-    fi
-  done
-  return 1
+      ;;
+    *) return 1 ;;
+  esac
 }
 
 services_commit_parsed_entry() {
   local config_file="$1"
   local -n entry_values_ref="$2"
-  local -n entry_paths_ref="$3"
+  local -n entry_fields_ref="$3"
   local -n file_ids_ref="$4"
-  local service_id="${entry_values_ref[service.id]-}"
-  local path
+  local service_id="${entry_values_ref[id]-}"
+  local field
 
   if [[ -z "${service_id}" ]]; then
-    log_error "Service instance entry is missing service.id in ${config_file}."
+    log_error "Service instance entry is missing id in ${config_file}."
     return 1
   fi
 
@@ -106,8 +68,8 @@ services_commit_parsed_entry() {
     SERVICE_INSTANCE_KNOWN["${service_id}"]=true
   fi
 
-  for path in "${entry_paths_ref[@]}"; do
-    SERVICE_INSTANCE_VALUES["${service_id}|${path}"]="${entry_values_ref[${path}]}"
+  for field in "${entry_fields_ref[@]}"; do
+    SERVICE_INSTANCE_VALUES["${service_id}|${field}"]="${entry_values_ref[${field}]}"
   done
 }
 
@@ -116,22 +78,17 @@ services_parse_file() {
   local line
   local content
   local leading_spaces
-  local key
+  local field
   local raw_value
-  local path
-  local parent_path
-  local service_version=""
+  local version=""
   local line_number=0
   local indent=0
-  local parent_indent=0
-  local in_services="false"
+  local collection_seen="false"
   local entry_active="false"
-  local depth
-  local -A path_at_indent=()
   local -A entry_values=()
-  local -A entry_seen_paths=()
+  local -A entry_seen_fields=()
   local -A file_ids=()
-  local -a entry_paths=()
+  local -a entry_fields=()
 
   if ! file_is_readable "${config_file}"; then
     log_error "Service instance configuration is not readable: ${config_file}."
@@ -154,22 +111,14 @@ services_parse_file() {
     indent=${#leading_spaces}
     content="${line:${indent}}"
 
-    if ((indent % 2 != 0)); then
-      log_error "Service configuration indentation must use two-space steps at line ${line_number} in ${config_file}."
-      return 1
-    fi
-
     if ((indent == 0)); then
       if [[ "${content}" =~ ^version:[[:space:]]*([0-9]+)[[:space:]]*$ ]]; then
-        service_version="${BASH_REMATCH[1]}"
+        version="${BASH_REMATCH[1]}"
         continue
       fi
-      if [[ "${content}" == "services:" ]]; then
-        in_services="true"
-        continue
-      fi
-      if [[ "${content}" =~ ^services:[[:space:]]*\[\][[:space:]]*$ ]]; then
-        in_services="true"
+      if [[ "${content}" == "services:" ]] ||
+        [[ "${content}" =~ ^services:[[:space:]]*\[\][[:space:]]*$ ]]; then
+        collection_seen="true"
         continue
       fi
 
@@ -177,193 +126,132 @@ services_parse_file() {
       return 1
     fi
 
-    if [[ "${in_services}" != "true" ]]; then
+    if [[ "${collection_seen}" != "true" ]]; then
       log_error "Service entries must appear below services at line ${line_number} in ${config_file}."
       return 1
     fi
 
-    if ((indent == 2)) && [[ "${content}" =~ ^-[[:space:]]+service:[[:space:]]*$ ]]; then
+    if ((indent == 2)) &&
+      [[ "${content}" =~ ^-[[:space:]]+id:[[:space:]]*(.*)$ ]]; then
+      raw_value="${BASH_REMATCH[1]}"
       if [[ "${entry_active}" == "true" ]]; then
         services_commit_parsed_entry \
-          "${config_file}" entry_values entry_paths file_ids || return 1
+          "${config_file}" entry_values entry_fields file_ids || return 1
       fi
 
       entry_active="true"
       entry_values=()
-      entry_seen_paths=()
-      entry_paths=()
-      path_at_indent=()
-      path_at_indent[4]="service"
+      entry_seen_fields=()
+      entry_fields=()
+      if ! records_decode_scalar "${raw_value}" || [[ -z "${RECORDS_DECODED_VALUE}" ]]; then
+        log_error "Service instance id is missing or invalid at line ${line_number} in ${config_file}."
+        return 1
+      fi
+      entry_values[id]="${RECORDS_DECODED_VALUE}"
+      entry_seen_fields[id]=true
+      entry_fields+=(id)
       continue
     fi
 
-    if [[ "${entry_active}" != "true" ]]; then
-      log_error "Expected a '- service:' entry at line ${line_number} in ${config_file}."
-      return 1
-    fi
-
-    if ((indent < 4)) || [[ ! "${content}" =~ ^([a-z][a-z0-9_-]*):[[:space:]]*(.*)$ ]]; then
+    if [[ "${entry_active}" != "true" ]] || ((indent != 4)) ||
+      [[ ! "${content}" =~ ^([a-z][a-z0-9_]*):[[:space:]]*(.*)$ ]]; then
       log_error "Unsupported service configuration syntax at line ${line_number} in ${config_file}."
       return 1
     fi
 
-    key="${BASH_REMATCH[1]}"
+    field="${BASH_REMATCH[1]}"
     raw_value="${BASH_REMATCH[2]}"
-
-    for depth in "${!path_at_indent[@]}"; do
-      if ((depth >= indent)); then
-        unset 'path_at_indent[$depth]'
-      fi
-    done
-
-    if ((indent == 4)); then
-      path="${key}"
-    else
-      parent_indent=$((indent - 2))
-      parent_path="${path_at_indent[${parent_indent}]-}"
-      if [[ -z "${parent_path}" ]]; then
-        log_error "Missing parent mapping at line ${line_number} in ${config_file}."
-        return 1
-      fi
-      if [[ -n "${entry_values[${parent_path}]+defined}" &&
-        -n "${entry_values[${parent_path}]}" ]]; then
-        log_error "Scalar field cannot contain nested configuration at line ${line_number} in ${config_file}."
-        return 1
-      fi
-      path="${parent_path}.${key}"
-    fi
-
-    if [[ -n "${entry_seen_paths[${path}]+defined}" ]]; then
-      log_error "Duplicate service configuration field '${path}' in ${config_file}."
+    if ! services_field_is_supported "${field}" || [[ "${field}" == "id" ]]; then
+      log_error "Unsupported service instance field '${field}' in ${config_file}."
       return 1
     fi
-
-    if services_path_is_sensitive "${path}"; then
-      log_error "Sensitive field names are forbidden in service configuration: ${path}. Use a credential reference instead."
+    if [[ -n "${entry_seen_fields[${field}]+defined}" ]]; then
+      log_error "Duplicate service instance field '${field}' in ${config_file}."
       return 1
     fi
-
-    if ! services_decode_scalar "${raw_value}"; then
+    if ! records_decode_scalar "${raw_value}"; then
       log_error "Unsupported scalar value at line ${line_number} in ${config_file}."
       return 1
     fi
 
-    entry_values["${path}"]="${SERVICES_DECODED_VALUE}"
-    entry_seen_paths["${path}"]=true
-    entry_paths+=("${path}")
-    path_at_indent["${indent}"]="${path}"
+    entry_values["${field}"]="${RECORDS_DECODED_VALUE}"
+    entry_seen_fields["${field}"]=true
+    entry_fields+=("${field}")
   done <"${config_file}"
 
-  if [[ "${service_version}" != "1" ]]; then
+  if [[ "${version}" != "1" ]]; then
     log_error "Service configuration must declare supported version 1: ${config_file}."
     return 1
   fi
-
-  if [[ "${in_services}" != "true" ]]; then
+  if [[ "${collection_seen}" != "true" ]]; then
     log_error "Service configuration must define a services collection: ${config_file}."
     return 1
   fi
-
   if [[ "${entry_active}" == "true" ]]; then
     services_commit_parsed_entry \
-      "${config_file}" entry_values entry_paths file_ids || return 1
-  fi
-}
-
-services_check_user_file_permissions() {
-  local config_file="$1"
-  local mode
-  local permission_bits
-
-  if [[ -L "${config_file}" ]]; then
-    log_error "User service configuration must not be a symbolic link: ${config_file}."
-    return 1
-  fi
-
-  if ! mode="$(stat -c '%a' "${config_file}" 2>/dev/null)"; then
-    log_error "Unable to verify user service configuration permissions: ${config_file}."
-    return 1
-  fi
-  mode="${mode: -3}"
-  if [[ ! "${mode}" =~ ^[0-7]{3}$ ]]; then
-    log_error "Unable to interpret user service configuration permissions: ${config_file}."
-    return 1
-  fi
-
-  permission_bits=$((8#${mode}))
-  if ((permission_bits & 077)); then
-    log_error "User service configuration permissions must be 0600 or stricter: ${config_file}."
-    return 1
+      "${config_file}" entry_values entry_fields file_ids || return 1
   fi
 }
 
 services_value_exists() {
   local service_id="$1"
-  local path="$2"
-  [[ -n "${SERVICE_INSTANCE_VALUES[${service_id}|${path}]+defined}" ]]
+  local field="$2"
+  [[ -n "${SERVICE_INSTANCE_VALUES[${service_id}|${field}]+defined}" ]]
+}
+
+services_validate_reference() {
+  local service_id="$1"
+  local field="$2"
+  local value="${SERVICE_INSTANCE_VALUES[${service_id}|${field}]}"
+
+  if [[ -n "${value}" && ! "${value}" =~ ^[a-z][a-z0-9._/-]{0,127}$ ]]; then
+    log_error "Service instance '${service_id}' field '${field}' must be an empty value or a generic configuration reference."
+    return 1
+  fi
 }
 
 services_validate_instance() {
   local service_id="$1"
-  local required_path
-  local path
-  local composite_key
-  local value
-  local root
-  local -a required_paths=(
-    service.id
-    service.name
-    service.enabled
-    ai.model
-    ai.prompt
-    knowledge.source
-    channels.enabled
-    integration.provider
-    integration.config
+  local required_field
+  local -a required_fields=(
+    id
+    name
+    enabled
+    ai_config
+    prompt_config
+    knowledge_config
+    channel_config
+  )
+  local -a reference_fields=(
+    ai_config
+    prompt_config
+    knowledge_config
+    channel_config
   )
 
-  for required_path in "${required_paths[@]}"; do
-    if ! services_value_exists "${service_id}" "${required_path}"; then
-      log_error "Service instance '${service_id}' is missing required field: ${required_path}."
+  for required_field in "${required_fields[@]}"; do
+    if ! services_value_exists "${service_id}" "${required_field}"; then
+      log_error "Service instance '${service_id}' is missing required field: ${required_field}."
       return 1
     fi
   done
 
-  if [[ "${SERVICE_INSTANCE_VALUES[${service_id}|service.id]}" != "${service_id}" ]]; then
+  if [[ "${SERVICE_INSTANCE_VALUES[${service_id}|id]}" != "${service_id}" ]]; then
     log_error "Service instance identifier mismatch for '${service_id}'."
     return 1
   fi
-
-  value="${SERVICE_INSTANCE_VALUES[${service_id}|service.name]}"
-  if [[ -z "${value}" || ${#value} -gt 128 ]]; then
+  if [[ -z "${SERVICE_INSTANCE_VALUES[${service_id}|name]}" ||
+    ${#SERVICE_INSTANCE_VALUES[${service_id}|name]} -gt 128 ]]; then
     log_error "Service instance '${service_id}' must have a name of 1-128 characters."
     return 1
   fi
-
-  value="${SERVICE_INSTANCE_VALUES[${service_id}|service.enabled]}"
-  if ! validation_is_boolean "${value}"; then
+  if ! validation_is_boolean "${SERVICE_INSTANCE_VALUES[${service_id}|enabled]}"; then
     log_error "Service instance '${service_id}' enabled state must be true or false."
     return 1
   fi
 
-  value="${SERVICE_INSTANCE_VALUES[${service_id}|channels.enabled]}"
-  if [[ "${value}" != "true" && "${value}" != "false" &&
-    ! "${value}" =~ ^\[[^][]*\]$ ]]; then
-    log_error "Service instance '${service_id}' channels.enabled must be a boolean or inline list."
-    return 1
-  fi
-
-  for composite_key in "${!SERVICE_INSTANCE_VALUES[@]}"; do
-    [[ "${composite_key}" == "${service_id}|"* ]] || continue
-    path="${composite_key#*|}"
-    root="${path%%.*}"
-    case "${root}" in
-      service | ai | knowledge | channels | integration) ;;
-      *)
-        log_error "Service instance '${service_id}' contains unsupported section: ${root}."
-        return 1
-        ;;
-    esac
+  for required_field in "${reference_fields[@]}"; do
+    services_validate_reference "${service_id}" "${required_field}" || return 1
   done
 }
 
@@ -397,12 +285,12 @@ services_load() {
   services_reset
   SERVICES_DEFAULT_CONFIG_FILE="${default_file}"
   SERVICES_USER_CONFIG_FILE="${user_file}"
-
   services_parse_file "${SERVICES_DEFAULT_CONFIG_FILE}" || return 1
 
   if [[ -n "${SERVICES_USER_CONFIG_FILE}" &&
     (-e "${SERVICES_USER_CONFIG_FILE}" || -L "${SERVICES_USER_CONFIG_FILE}") ]]; then
-    services_check_user_file_permissions "${SERVICES_USER_CONFIG_FILE}" || return 1
+    records_check_user_file_permissions \
+      "${SERVICES_USER_CONFIG_FILE}" "User service configuration" || return 1
     if ! file_is_readable "${SERVICES_USER_CONFIG_FILE}"; then
       log_error "User service configuration is not readable: ${SERVICES_USER_CONFIG_FILE}."
       return 1
@@ -423,10 +311,17 @@ services_has_instance() {
   [[ -n "${SERVICE_INSTANCE_KNOWN[${service_id}]+known}" ]]
 }
 
+services_is_enabled() {
+  local service_id="$1"
+
+  services_has_instance "${service_id}" &&
+    [[ "${SERVICE_INSTANCE_VALUES[${service_id}|enabled]}" == "true" ]]
+}
+
 services_get_instance() {
   local service_id="$1"
   local composite_key
-  local path
+  local field
 
   if [[ "${SERVICES_CONFIG_LOADED}" != "true" ]]; then
     log_error "Service instance configuration has not been loaded."
@@ -440,20 +335,20 @@ services_get_instance() {
   SERVICE_INSTANCE_CONFIG=()
   for composite_key in "${!SERVICE_INSTANCE_VALUES[@]}"; do
     [[ "${composite_key}" == "${service_id}|"* ]] || continue
-    path="${composite_key#*|}"
-    SERVICE_INSTANCE_CONFIG["${path}"]="${SERVICE_INSTANCE_VALUES[${composite_key}]}"
+    field="${composite_key#*|}"
+    SERVICE_INSTANCE_CONFIG["${field}"]="${SERVICE_INSTANCE_VALUES[${composite_key}]}"
   done
 }
 
 services_get_value() {
   local service_id="$1"
-  local path="$2"
+  local field="$2"
 
   services_get_instance "${service_id}" || return 1
-  if [[ -z "${SERVICE_INSTANCE_CONFIG[${path}]+defined}" ]]; then
+  if [[ -z "${SERVICE_INSTANCE_CONFIG[${field}]+defined}" ]]; then
     return 1
   fi
-  printf '%s\n' "${SERVICE_INSTANCE_CONFIG[${path}]}"
+  printf '%s\n' "${SERVICE_INSTANCE_CONFIG[${field}]}"
 }
 
 services_list_ids() {

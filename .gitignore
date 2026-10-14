@@ -6,6 +6,8 @@
 *.key
 /config/services/local.yaml
 /config/services/*.local.yaml
+/config/domains/local.yaml
+/config/domains/*.local.yaml
 
 # Installer runtime state and logs
 .installer-state
