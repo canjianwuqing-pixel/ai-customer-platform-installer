@@ -164,13 +164,15 @@ def create_app(env=None, management=None, maintenance=None):
     async def public_call(kind, method, key="", data=None):
         # Upstream schemas are strict; additionally reject known secret values
         # from user content, so a pasted internal token cannot enter a page.
+        protected = (management.token, maintenance.token, auth.secret, *auth.protected_values())
+        def sensitive(value):
+            encoded = json.dumps(value, ensure_ascii=False)
+            return any(secret and json.dumps(secret, ensure_ascii=False)[1:-1] in encoded for secret in protected)
         if data is not None:
-            encoded = json.dumps(data)
-            if any(value and value in encoded for value in (management.token, maintenance.token, auth.secret, auth.bootstrap_hash)):
+            if sensitive(data):
                 raise AdminError("sensitive_input_rejected", 422)
         result = await management.call(method, resource_path(kind, key), data)
-        encoded = json.dumps(result)
-        if any(value and value in encoded for value in (management.token, maintenance.token, auth.secret, auth.bootstrap_hash)):
+        if sensitive(result):
             raise AdminError("unsafe_upstream_response", 502)
         return result
 

@@ -12,7 +12,6 @@ readonly DOCKER_CALL_LOG="${TEST_TEMP_ROOT}/docker.log"
 readonly NGINX_CALL_LOG="${TEST_TEMP_ROOT}/nginx.log"
 readonly DOMAIN_CALL_LOG="${TEST_TEMP_ROOT}/domain.log"
 readonly CERTBOT_CALL_LOG="${TEST_TEMP_ROOT}/certbot.log"
-readonly PASSWORD_ONCE_FILE="${TEST_TEMP_ROOT}/.installer-admin-password-once"
 
 cleanup() {
   local resolved_parent
@@ -35,7 +34,6 @@ trap cleanup EXIT
 
 export PATH="${TEST_ROOT}/tests/fixtures/secrets/bin:${TEST_ROOT}/tests/fixtures/docker-ready/bin:${PATH}"
 export CONFIG_FILE="${TEST_CONFIG}"
-export INSTALLER_ADMIN_ONCE_FILE="${PASSWORD_ONCE_FILE}"
 export SECRETS_CHMOD_LOG="${CHMOD_CALL_LOG}"
 export DOCKER_FIXTURE_LOG="${DOCKER_CALL_LOG}"
 export NGINX_CONFIG_ROOT="${TEST_TEMP_ROOT}/nginx"
@@ -125,7 +123,7 @@ for forbidden_output in \
   '请输入 OpenAI API Key：' \
   '请输入 AI 模型名称：' \
   'AI 管理后台：' \
-  '初始密码（仅显示一次）：'; do
+  '初始密码：'; do
   if grep -Fq -- "${forbidden_output}" "${INSTALL_OUTPUT}"; then
     printf 'Unexpected installation output: %s\n' "${forbidden_output}" >&2
     exit 1
@@ -134,11 +132,6 @@ done
 
 if grep -Fq -- 'stacks/ai-service/compose.yaml' "${DOCKER_CALL_LOG}"; then
   printf '%s\n' 'The installer invoked the optional AI Service stack without an image.' >&2
-  exit 1
-fi
-
-if [[ -e "${PASSWORD_ONCE_FILE}" ]]; then
-  printf '%s\n' 'A disabled Admin must not create a password nonce.' >&2
   exit 1
 fi
 

@@ -19,7 +19,6 @@ trap cleanup EXIT
 trap 'printf "Admin module fixture failed at line %s.\n" "${LINENO}" >&2' ERR
 export INSTALLER_ROOT="${TEST_ROOT}"
 export CONFIG_FILE="${TEST_TEMP}/.env"
-export INSTALLER_ADMIN_ONCE_FILE="${TEST_TEMP}/.installer-admin-password-once"
 export DOCKER_FIXTURE_LOG="${TEST_TEMP}/docker.log"
 export PATH="${TEST_ROOT}/tests/fixtures/docker-ready/bin:${PATH}"
 source "${TEST_ROOT}/lib/common.sh"
@@ -57,16 +56,16 @@ secrets_ensure >>"${TEST_TEMP}/setup.log"
 readonly OLD_PASSWORD="${AI_ADMIN_PASSWORD}"
 admin_prepare_credentials >>"${TEST_TEMP}/setup.log"
 [[ -z "${AI_ADMIN_PASSWORD}" && -z "${AI_ADMIN_SESSION_SECRET}" ]]
-[[ "${ADMIN_PASSWORD_HASH}" =~ ^pbkdf2_sha256:600000: ]]
-if grep -Fq -- "${OLD_PASSWORD}" "${CONFIG_FILE}" || grep -Fq -- "${OLD_PASSWORD}" "${TEST_TEMP}/setup.log"; then
-  printf '%s\n' 'Legacy plaintext password was not safely migrated.' >&2; exit 1
+[[ "${ADMIN_PASSWORD}" == "${OLD_PASSWORD}" && -z "${ADMIN_PASSWORD_HASH}" ]]
+if grep -Fq -- "${OLD_PASSWORD}" "${TEST_TEMP}/setup.log"; then
+  printf '%s\n' 'Administrator password was exposed in setup logs.' >&2; exit 1
 fi
-readonly FIRST_HASH="${ADMIN_PASSWORD_HASH}"
+readonly FIRST_PASSWORD="${ADMIN_PASSWORD}"
 readonly FIRST_SECRET="${ADMIN_SESSION_SECRET}"
 config_load_installer_configuration "${CONFIG_FILE}" >/dev/null
 secrets_ensure >>"${TEST_TEMP}/setup.log"
 admin_prepare_credentials >>"${TEST_TEMP}/setup.log"
-[[ "${ADMIN_PASSWORD_HASH}" == "${FIRST_HASH}" && "${ADMIN_SESSION_SECRET}" == "${FIRST_SECRET}" ]]
+[[ "${ADMIN_PASSWORD}" == "${FIRST_PASSWORD}" && "${ADMIN_SESSION_SECRET}" == "${FIRST_SECRET}" ]]
 
 # Stub privileged installation only: never write /etc or operate real systemd.
 run_as_root() {
@@ -103,7 +102,6 @@ for rendered in http https; do
 done
 admin_print_completion >"${TEST_TEMP}/completion.log"
 if grep -Fq "${OLD_PASSWORD}" "${TEST_TEMP}/completion.log"; then exit 1; fi
-[[ ! -e "${INSTALLER_ADMIN_ONCE_FILE}" ]]
 admin_print_completion >"${TEST_TEMP}/completion-again.log"
 if grep -Fq "${OLD_PASSWORD}" "${TEST_TEMP}/completion-again.log"; then exit 1; fi
 
@@ -116,49 +114,37 @@ backup_write_configuration_files "${TEST_TEMP}/backup-config"
 cmp -- "${TEST_ROOT}/stacks/admin/compose.yaml" "${TEST_TEMP}/backup-config/compose/admin.compose.yaml"
 cmp -- "${TEST_ROOT}/stacks/ai-service/compose.runtime.yaml" "${TEST_TEMP}/backup-config/compose/runtime.compose.yaml"
 
-# Fresh install: no legacy plaintext, cryptographic random password, stable hash.
+# Fresh configuration uses the public default; custom values remain private.
 CONFIG_FILE="${TEST_TEMP}/fresh.env"
 config_create_from_template "${CONFIG_FILE}" "${TEST_ROOT}/.env.example" >/dev/null
 config_load_installer_configuration "${CONFIG_FILE}" >/dev/null
 ADMIN_ENABLED=true
 AI_ADMIN_PASSWORD="" AI_ADMIN_SESSION_SECRET=""
+ADMIN_MAINTENANCE_STATE_DIR="${TEST_TEMP}/state"
+ADMIN_MAINTENANCE_SOCKET_DIR="${TEST_TEMP}/socket"
+setup_configure_optional_modules >"${TEST_TEMP}/fresh-setup.log"
 admin_prepare_credentials >"${TEST_TEMP}/fresh.log"
-readonly FRESH_HASH="${ADMIN_PASSWORD_HASH}"
-[[ "$(<"${INSTALLER_ADMIN_ONCE_FILE}")" =~ ^[a-f0-9]{64}$ ]]
-if [[ "${OSTYPE:-}" != msys* && "${OSTYPE:-}" != cygwin* &&
-  "$(/usr/bin/stat -c %a "${INSTALLER_ADMIN_ONCE_FILE}")" != 600 ]]; then exit 1; fi
-readonly FRESH_PASSWORD="$(admin_initial_password)"
-[[ "${FRESH_PASSWORD}" =~ ^[a-f0-9]{32}$ ]]
-if grep -Fq -- "${FRESH_PASSWORD}" "${CONFIG_FILE}" || grep -Fq -- "${FRESH_PASSWORD}" "${TEST_TEMP}/fresh.log"; then exit 1; fi
+[[ "${ADMIN_USERNAME}" == admin && "${ADMIN_PASSWORD}" == admin && -z "${ADMIN_PASSWORD_HASH}" ]]
 admin_prepare_credentials >>"${TEST_TEMP}/fresh.log"
-[[ "${ADMIN_PASSWORD_HASH}" == "${FRESH_HASH}" ]]
-[[ "$(admin_initial_password)" == "${FRESH_PASSWORD}" ]]
-# A mismatched hash must neither reveal a password nor discard its nonce.
-if ADMIN_PASSWORD_HASH="pbkdf2_sha256:600000:00000000000000000000000000000000:0000000000000000000000000000000000000000000000000000000000000000" \
-  admin_print_completion >"${TEST_TEMP}/mismatched-hash.log" 2>&1; then
-  printf '%s\n' 'Completion accepted a mismatched password hash.' >&2; exit 1
-fi
-[[ -f "${INSTALLER_ADMIN_ONCE_FILE}" ]]
-if grep -Fq "${FRESH_PASSWORD}" "${TEST_TEMP}/mismatched-hash.log"; then exit 1; fi
-# Output failure must preserve the verified nonce for a later successful run.
-if (
-  printf() {
-    [[ "$1" != '初始密码（仅显示一次）：'* ]] || return 1
-    builtin printf "$@"
-  }
-  admin_print_completion
-) >"${TEST_TEMP}/failed-display.log" 2>&1; then
-  printf '%s\n' 'A failed initial password display was reported as successful.' >&2; exit 1
-fi
-[[ -f "${INSTALLER_ADMIN_ONCE_FILE}" ]]
-if grep -Fq "${FRESH_PASSWORD}" "${TEST_TEMP}/failed-display.log"; then exit 1; fi
 admin_print_completion >"${TEST_TEMP}/fresh-completion.log"
-grep -Fq "${FRESH_PASSWORD}" "${TEST_TEMP}/fresh-completion.log"
-[[ ! -e "${INSTALLER_ADMIN_ONCE_FILE}" ]]
+[[ "$(awk '/^初始密码：$/ {getline; print; exit}' "${TEST_TEMP}/fresh-completion.log")" == admin ]]
 admin_print_completion >"${TEST_TEMP}/fresh-again.log"
-if grep -Fq "${FRESH_PASSWORD}" "${TEST_TEMP}/fresh-again.log"; then exit 1; fi
+[[ "$(awk '/^初始密码：$/ {getline; print; exit}' "${TEST_TEMP}/fresh-again.log")" == admin ]]
+ADMIN_PASSWORD=123456
+config_save_keys "${CONFIG_FILE}" ADMIN_PASSWORD
+admin_prepare_credentials >>"${TEST_TEMP}/fresh.log"
+admin_configure >>"${TEST_TEMP}/fresh.log"
+[[ "${ADMIN_PASSWORD}" == 123456 ]]
+if grep -Fq 123456 "${TEST_TEMP}/fresh.log"; then exit 1; fi
+ADMIN_PASSWORD_HASH=pbkdf2_sha256:600000:00000000000000000000000000000000:0000000000000000000000000000000000000000000000000000000000000000
+config_save_keys "${CONFIG_FILE}" ADMIN_PASSWORD_HASH
+admin_prepare_credentials >>"${TEST_TEMP}/fresh.log"
+[[ -z "${ADMIN_PASSWORD}" && -n "${ADMIN_PASSWORD_HASH}" ]]
+admin_print_completion >"${TEST_TEMP}/legacy-completion.log"
+grep -Fq '保留已有密码' "${TEST_TEMP}/legacy-completion.log"
+[[ -z "$(find "${TEST_TEMP}" -name '.installer-admin-password-*' -print -quit)" ]]
 if [[ "${OSTYPE:-}" != msys* && "${OSTYPE:-}" != cygwin* && "$(/usr/bin/stat -c %a "${CONFIG_FILE}")" != 600 ]]; then exit 1; fi
 ADMIN_ENABLED=false
 nginx_render_template "${TEST_TEMP}/disabled.conf"
 if grep -Fq 'location = /admin' "${TEST_TEMP}/disabled.conf"; then exit 1; fi
-printf '%s\n' 'Unified Admin configuration, migration, Compose, Nginx and one-time credential fixtures passed.'
+printf '%s\n' 'Unified Admin default/custom credentials, legacy compatibility, Compose and Nginx fixtures passed.'

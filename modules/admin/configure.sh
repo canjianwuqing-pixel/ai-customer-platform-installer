@@ -4,9 +4,15 @@ set -Eeuo pipefail
 admin_configure() {
   validation_is_boolean "${ADMIN_ENABLED:-false}" || return 1
   [[ "${ADMIN_ENABLED:-false}" == true ]] || return 0
-  validation_require_keys ADMIN_USERNAME ADMIN_PASSWORD_HASH ADMIN_SESSION_SECRET ADMIN_MAINTENANCE_TOKEN ADMIN_API_URL ADMIN_MAINTENANCE_STATE_DIR ADMIN_MAINTENANCE_SOCKET_DIR ADMIN_MAINTENANCE_UNIT
-  [[ "${ADMIN_USERNAME}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{2,63}$ ]] || return 1
-  [[ "${ADMIN_PASSWORD_HASH}" =~ ^pbkdf2_sha256:600000:[a-f0-9]{32}:[a-f0-9]{64}$ ]] || { log_error "ADMIN_PASSWORD_HASH is invalid."; return 1; }
+  local password="${ADMIN_PASSWORD:-}"
+  validation_require_keys ADMIN_USERNAME ADMIN_SESSION_SECRET ADMIN_MAINTENANCE_TOKEN ADMIN_API_URL ADMIN_MAINTENANCE_STATE_DIR ADMIN_MAINTENANCE_SOCKET_DIR ADMIN_MAINTENANCE_UNIT
+  [[ "${ADMIN_USERNAME}" == admin ]] || { log_error "ADMIN_USERNAME must be admin."; return 1; }
+  if [[ -n "${ADMIN_PASSWORD_HASH:-}" ]]; then
+    [[ "${ADMIN_PASSWORD_HASH}" =~ ^pbkdf2_sha256:600000:[a-f0-9]{32}:[a-f0-9]{64}$ ]] || { log_error "Legacy administrator hash is invalid."; return 1; }
+  elif [[ "${password}" != admin ]] &&
+    (( ${#password} < 6 || ${#password} > 1024 )); then
+    log_error "ADMIN_PASSWORD must be admin initially, or contain 6-1024 characters."; return 1
+  fi
   [[ ${#ADMIN_SESSION_SECRET} -ge 32 && ${#ADMIN_MAINTENANCE_TOKEN} -ge 32 ]] || return 1
   [[ "${AI_ADMIN_BIND_ADDRESS}" == "127.0.0.1" ]] || { log_error "Unified Admin must bind to loopback behind HTTPS Nginx."; return 1; }
   validation_is_http_url "${ADMIN_API_URL}" || return 1

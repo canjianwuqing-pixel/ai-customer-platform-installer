@@ -1,6 +1,7 @@
 """Unified Admin fixtures: real auth/Runtime storage, no live infrastructure."""
 
 from contextlib import closing
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -22,7 +23,6 @@ from platform_admin.auth import AdminError, AuthStore
 from platform_admin.clients import InternalClient
 from platform_admin.maintenance_worker import MaintenanceError, Runner
 from platform_admin.maintenance_worker import make_handler
-from platform_admin.passwords import hash_password, initial_password, verify_password
 from ai_runtime.app import create_app as runtime_app
 from ai_runtime.config import ServiceResolver
 from ai_runtime.engine import RuntimeEngine
@@ -30,16 +30,13 @@ from ai_runtime.management_store import ManagementStore, SCHEMA_VERSION
 
 
 class AdminFixtures(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls.password = "fixture-password-not-real-123"
-        cls.password_hash = hash_password(cls.password)
+    password = "fixture-password-not-real-123"
 
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="unified-admin-fixture-")
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
-        self.env = {"ADMIN_USERNAME": "admin", "ADMIN_PASSWORD_HASH": self.password_hash,
+        self.env = {"ADMIN_USERNAME": "admin", "ADMIN_PASSWORD": self.password,
                     "ADMIN_SESSION_SECRET": "fixture-session-secret-not-real-123456789",
                     "ADMIN_MAINTENANCE_TOKEN": "fixture-worker-token-not-real-123456789",
                     "SERVICE_MANAGEMENT_TOKEN": "fixture-management-token-not-real-123456789",
@@ -136,7 +133,9 @@ class AdminFixtures(unittest.TestCase):
             self.assertIsNone(fresh.session(token))
         raw = (self.root / "admin" / "auth.sqlite3").read_bytes()
         self.assertNotIn(self.password.encode(), raw)
-        self.assertNotIn(replacement.encode(), raw)
+        self.assertIn(replacement.encode(), raw)
+        with closing(sqlite3.connect(self.root / "admin" / "auth.sqlite3")) as db:
+            self.assertEqual(db.execute("SELECT value FROM admin_settings WHERE name='ADMIN_PASSWORD'").fetchone()[0], replacement)
 
     def test_service_page_create_edit_enable_disable_and_validation(self):
         self.login()
@@ -230,7 +229,7 @@ class AdminFixtures(unittest.TestCase):
         responses.append(self.post("/admin/api/services/service_a", {"name": self.env["SERVICE_MANAGEMENT_TOKEN"]}, "PATCH"))
         responses.append(self.post("/admin/system/run", {"operation": "shell", "version": "", "confirmation": "SHELL"}))
         combined = "".join(response.text + str(response.headers) for response in responses)
-        for key in ("SERVICE_MANAGEMENT_TOKEN", "ADMIN_MAINTENANCE_TOKEN", "ADMIN_SESSION_SECRET", "ADMIN_PASSWORD_HASH"):
+        for key in ("SERVICE_MANAGEMENT_TOKEN", "ADMIN_MAINTENANCE_TOKEN", "ADMIN_SESSION_SECRET", "ADMIN_PASSWORD"):
             self.assertNotIn(self.env[key], combined)
         self.assertNotIn(self.password, combined)
 
@@ -278,14 +277,110 @@ class AdminFixtures(unittest.TestCase):
             server.server_close()
             thread.join(timeout=5)
 
-    def test_initial_password_derivation_and_hash_verification(self):
-        nonce = "a1" * 32
-        password = initial_password(self.env["ADMIN_SESSION_SECRET"], nonce)
-        self.assertEqual(len(password), 32)
-        self.assertNotEqual(password, nonce)
-        self.assertEqual(password, initial_password(self.env["ADMIN_SESSION_SECRET"], nonce))
-        self.assertNotEqual(password, initial_password("different-fixture-secret-12345678901", nonce))
-        self.assertTrue(verify_password(password, hash_password(password)))
+    def test_default_admin_login_and_six_character_password_change(self):
+        self.client.close()
+        default_env = {**self.env, "ADMIN_USERNAME": "retired-name", "ADMIN_PASSWORD": "admin"}
+        default_env.pop("ADMIN_PASSWORD")
+        self.app = create_app(default_env, self.management, self.maintenance)
+        self.client = TestClient(self.app, base_url="https://platform.example.test", follow_redirects=False)
+        self.addCleanup(self.client.close)
+        self.assertEqual(self.login("admin").status_code, 303)
+        for replacement in ("", "12345", "admin"):
+            result = self.post("/admin/api/password", {"current_password": "admin", "new_password": replacement})
+            self.assertEqual(result.status_code, 422)
+            self.assertEqual(result.json()["error"], "password_must_be_6_to_1024_characters")
+        self.assertEqual(self.post("/admin/api/password", {"current_password": "admin", "new_password": "123456"}).status_code, 200)
+        fresh = AuthStore(default_env)
+        fresh.login("admin", "123456")
+        with self.assertRaises(AdminError):
+            fresh.login("admin", "admin")
+        with self.assertRaises(AdminError):
+            fresh.login("retired-name", "123456")
+        self.assertEqual(self.login("123456").status_code, 303)
+
+    def test_password_has_no_complexity_rule_and_persists_after_app_restart(self):
+        self.login()
+        replacement = "密码 空 格!"
+        self.assertEqual(self.post("/admin/api/password", {"current_password": self.password, "new_password": replacement}).status_code, 200)
+        self.client.close()
+        self.app = create_app(self.env, self.management, self.maintenance)
+        self.client = TestClient(self.app, base_url="https://platform.example.test", follow_redirects=False)
+        self.addCleanup(self.client.close)
+        self.assertEqual(self.login(self.password).status_code, 401)
+        self.assertEqual(self.login(replacement).status_code, 303)
+        self.assertEqual(self.client.get("/admin").status_code, 200)
+        self.assertIn('minlength="6"', self.client.get("/admin/password").text)
+
+    @staticmethod
+    def legacy_hash(password):
+        # Simulate the prior format; production only retains its verifier.
+        salt = "a1" * 16
+        digest = hashlib.pbkdf2_hmac("sha256", password.encode(), bytes.fromhex(salt), 600000).hex()
+        return "pbkdf2_sha256:600000:" + salt + ":" + digest
+
+    def test_existing_hash_environment_migrates_only_after_correct_login(self):
+        legacy = self.legacy_hash(self.password)
+        legacy_env = {**self.env, "ADMIN_PASSWORD": "admin", "ADMIN_PASSWORD_HASH": legacy}
+        auth = AuthStore(legacy_env)
+        with self.assertRaises(AdminError):
+            auth.login("admin", "admin")
+        with auth.db() as db:
+            self.assertFalse(db.execute("SELECT 1 FROM admin_settings").fetchone())
+        auth.login("admin", self.password)
+        with auth.db() as db:
+            self.assertEqual(db.execute("SELECT value FROM admin_settings WHERE name='ADMIN_PASSWORD'").fetchone()[0], self.password)
+            self.assertFalse(db.execute("SELECT 1 FROM sqlite_master WHERE name='account'").fetchone())
+        AuthStore({**legacy_env, "ADMIN_PASSWORD_HASH": ""}).login("admin", self.password)
+
+    def test_existing_database_password_wins_over_stale_environment_hash(self):
+        path = self.root / "admin" / "auth.sqlite3"
+        path.parent.mkdir(mode=0o700)
+        actual = "existing-current-password-not-real"
+        with closing(sqlite3.connect(path)) as db:
+            db.execute("CREATE TABLE account (id INTEGER PRIMARY KEY CHECK(id=1), hash TEXT NOT NULL)")
+            db.execute("INSERT INTO account VALUES (1, ?)", (self.legacy_hash(actual),))
+            db.commit()
+        auth = AuthStore({**self.env, "ADMIN_PASSWORD": "admin", "ADMIN_PASSWORD_HASH": self.legacy_hash(self.password)})
+        for wrong in ("admin", self.password):
+            with self.assertRaises(AdminError):
+                auth.login("admin", wrong)
+        auth.login("admin", actual)
+        auth.change_password(actual, "abcdef")
+        AuthStore({**self.env, "ADMIN_PASSWORD": "admin"}).login("admin", "abcdef")
+
+    def test_legacy_session_can_change_password_without_resetting_account(self):
+        auth = AuthStore({**self.env, "ADMIN_PASSWORD_HASH": self.legacy_hash(self.password)})
+        token, _ = auth.create_session(True)
+        auth.change_password(self.password, "      ")
+        self.assertIsNone(auth.session(token))
+        AuthStore(self.env).login("admin", "      ")
+
+    def test_bad_legacy_hash_fails_closed_instead_of_installing_default(self):
+        auth = AuthStore({**self.env, "ADMIN_PASSWORD_HASH": "invalid-hash", "ADMIN_PASSWORD": "admin"})
+        with self.assertRaises(AdminError):
+            auth.login("admin", "admin")
+
+    def test_failed_legacy_migration_preserves_the_existing_account(self):
+        auth = AuthStore({**self.env, "ADMIN_PASSWORD_HASH": self.legacy_hash(self.password)})
+        with auth.db() as db:
+            db.execute("CREATE TRIGGER fixture_block BEFORE INSERT ON admin_settings BEGIN SELECT RAISE(ABORT, 'fixture_failure'); END")
+        with self.assertRaises(sqlite3.Error):
+            auth.login("admin", self.password)
+        with auth.db() as db:
+            self.assertTrue(db.execute("SELECT hash FROM account WHERE id=1").fetchone())
+            self.assertFalse(db.execute("SELECT 1 FROM admin_settings").fetchone())
+            db.execute("DROP TRIGGER fixture_block")
+        auth.login("admin", self.password)
+
+    def test_passwords_are_not_exposed_by_management_or_password_responses(self):
+        self.login()
+        replacement = "private-password-after-change-123"
+        response = self.post("/admin/api/password", {"current_password": self.password, "new_password": replacement})
+        self.assertNotIn(replacement, response.text)
+        self.assertEqual(self.login(replacement).status_code, 303)
+        response = self.post("/admin/api/services", {"id": "service_a", "name": replacement, "enabled": False})
+        self.assertEqual(response.status_code, 422)
+        self.assertNotIn(replacement, response.text)
 
 
 if __name__ == "__main__":

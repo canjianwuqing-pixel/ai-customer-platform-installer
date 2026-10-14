@@ -15,7 +15,7 @@ SERVICE_ID = re.compile(r"[a-z][a-z0-9_-]{0,63}\Z")
 REFERENCE = re.compile(r"[a-z][a-z0-9._/-]{0,127}\Z")
 ENV_NAME = re.compile(r"[A-Z_][A-Z0-9_]*\Z")
 RESERVED_CREDENTIALS = {"SERVICE_MANAGEMENT_TOKEN", "INTERNAL_API_TOKEN", "AI_SERVICE_INTERNAL_TOKEN",
-                        "ADMIN_SESSION_SECRET", "ADMIN_PASSWORD_HASH", "ADMIN_MAINTENANCE_TOKEN",
+                        "ADMIN_SESSION_SECRET", "ADMIN_PASSWORD", "ADMIN_PASSWORD_HASH", "ADMIN_MAINTENANCE_TOKEN",
                         "AI_ADMIN_SESSION_SECRET", "AI_ADMIN_PASSWORD", "DATABASE_PASSWORD", "REDIS_PASSWORD", "SECRET_KEY_BASE"}
 SERVICE_FIELDS = {
     "id", "name", "enabled", "ai_config", "prompt_config",

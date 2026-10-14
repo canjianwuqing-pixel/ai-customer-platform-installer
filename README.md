@@ -29,7 +29,7 @@
 
 安装器按 `config/default.env`、`config/images.env`、`.env` 的顺序加载配置，后加载的用户配置优先。`config/images.env` 提供 Chatwoot、PostgreSQL 和 Redis 的固定版本，禁止使用 `latest`；`config/default.env` 保存非敏感运行参数。高级用户可以在 `.env` 中覆盖版本和镜像设置。
 
-`DATABASE_PASSWORD`、`REDIS_PASSWORD`、`SECRET_KEY_BASE`、`AI_SERVICE_INTERNAL_TOKEN` 和 `SERVICE_MANAGEMENT_TOKEN` 可以留空；安装器首次运行时自动生成安全随机值，重复执行保留已有值，并将 `.env` 权限限制为 `0600`。统一后台使用 `ADMIN_USERNAME`、`ADMIN_PASSWORD_HASH`、`ADMIN_SESSION_SECRET`，默认账号为 `admin`，初始密码只在完整安装成功后显示一次。旧自定义管理镜像的 `AI_ADMIN_*` 凭据仅为兼容已有部署保留；启用统一后台时会迁移为同一个账号并清空旧凭据，不再生成旧明文密码。不得向 Git 提交真实域名、邮箱、密码、密钥、证书或 Token。
+`DATABASE_PASSWORD`、`REDIS_PASSWORD`、`SECRET_KEY_BASE`、`AI_SERVICE_INTERNAL_TOKEN` 和 `SERVICE_MANAGEMENT_TOKEN` 可以留空；安装器首次运行时自动生成安全随机值，重复执行保留已有值，并将 `.env` 权限限制为 `0600`。统一后台账号固定为 `admin`，使用 `ADMIN_PASSWORD=admin` 作为公开出厂初始密码，`ADMIN_SESSION_SECRET` 仍安全随机生成。旧 `AI_ADMIN_*` 凭据只用于迁移同一个账号；旧 `ADMIN_PASSWORD_HASH` 仅为升级兼容输入，不再为新安装生成。除公开出厂值外，不得向 Git 提交真实域名、邮箱、密码、密钥、证书或 Token。
 
 `DOMAIN` 是当前唯一部署域名；`LETSENCRYPT_EMAIL` 用于 Let's Encrypt 账户和证书通知，`EMAIL` 继续作为 Chatwoot 的业务发件地址。V1 固定使用 Let's Encrypt HTTP-01 验证，因此域名必须能通过公共 DNS 解析到部署入口，公网 TCP 80 端口必须可达。
 
@@ -51,9 +51,10 @@ AI Service 和统一后台不是 Chatwoot 基础安装必选项。未配置 AI �
 
 认证与安全：
 
-- 初始密码由安全随机 nonce 与 Session Secret 经 HMAC 派生，再通过标准输入生成 PBKDF2-SHA256 哈希，`.env` 只保存 `ADMIN_PASSWORD_HASH`。旧密码仅用于迁移为这个账号，随后清空旧字段，不重新展示已知旧密码。安装未完成时，本地 `.installer-admin-password-once` 仅保存 nonce（不是密码），权限 `0600`、已忽略 Git；成功展示后删除，不进入备份。生成和哈希计算期间关闭 shell tracing，不记录初始密码；请不要录制终端输出。
-- nonce 的生成、读取、完成提示统一使用 `.installer-admin-password-once`；只在缺少 `ADMIN_PASSWORD_HASH` 时初始化，未启用后台时不提前生成旧式管理员密码或空展示标记。完成提示先验证派生密码与哈希一致，展示成功后再删除 nonce；校验/展示失败保留文件供重试，重复安装不会重新生成已有密码。若旧部署已经只有密码哈希而没有 nonce，哈希无法反推出密码，本修复不会静默重置现有账号；需要单独执行明确授权的密码重置流程。
-- 后台修改密码需校验当前密码，至少 16 字符；仅哈希写入管理数据卷的 `auth.sqlite3`。数据卷中的密码优先于 `.env` 的初始哈希，重新部署不会重置密码；恢复旧备份会恢复当时密码。
+- 初始账号/密码为 `admin/admin`。安装完成显示 `/admin` 地址、公开初始凭据及首次登录修改密码提示，不再生成随机初始密码或额外凭据文件。高级用户可在本地 `.env` 配置 `ADMIN_PASSWORD`；真实自定义密码不显示、不写日志、不提交 Git。默认密码是公开弱密码，请部署后立即修改，建议首次改密前限制管理入口的公网访问。
+- 后台修改密码必须验证当前密码，新密码至少 **6 个字符**、不限制复杂格式（资源保护上限 1024 字符）；`admin` 仅作为出厂例外，不能作为新的 5 位密码保存。密码直接保存为数据卷 `auth.sqlite3` 中的 `admin_settings.ADMIN_PASSWORD` 设置，不再进行新密码哈希派生；该文件 `0600`、目录 `0700`，数据库与本地 `.env` 均忽略 Git。此简单模式会在受保护配置中保存明文密码，备份也含密码，请严格保护配置、数据卷和备份访问权限。
+- 配置优先级：持久化 `ADMIN_PASSWORD` 设置 > 首次初始化时的 `.env` 值 > 出厂 `admin`。`.env` 是初始化输入，不会在重启、重新安装时覆盖后台已修改的密码；需要更新已有账号时，请通过后台修改密码。完成提示中的 `admin` 是初始值，不表示已修改的密码被重置。恢复旧备份会恢复当时的密码。
+- 旧配置升级：先读取现有数据库里的有效账号哈希，其次才是 `ADMIN_PASSWORD_HASH` 环境变量；即使环境中存在默认 `ADMIN_PASSWORD=admin`，也不重置旧账号。哈希不可还原，因此仅保留旧格式的校验器，首次正确登录或通过已有 Session 修改密码后，事务性保存实际密码到新 `ADMIN_PASSWORD` 设置并退役旧账号记录。旧哈希字段之后不再用于认证，可从本地 `.env` 移除；忘记旧密码须另行明确重置，不会自动改成默认密码。升级前请备份，旧版本回滚使用原备份恢复流程。
 - Session 为随机不透明 Cookie，数据库只存其摘要；默认一小时有效，登录轮换、退出撤销、修改密码撤销全部 Session。Cookie 使用 Secure、HttpOnly、SameSite=Strict，所有写请求验证 CSRF，登录失败有全局限速。仅支持 HTTPS 登录。
 - 浏览器使用 `/admin/api/*` + Session；后台服务端再用 `SERVICE_MANAGEMENT_TOKEN` 调用内部 `/management/*`。不返回 Token、环境变量、完整异常或维护脚本输出。原 `/chat` 和 `/management` Token 认证继续独立工作。
 
@@ -69,7 +70,7 @@ profile API 采用与现有配置相同的 SQLite 覆盖方式，不重写 YAML�
 
 任务串行执行，状态写入 `ADMIN_MAINTENANCE_STATE_DIR`，容器停机/重建不会中断宿主机任务。恢复/升级时后台可能暂时不可达，稍后重新登录查看结果；后台只显示状态、版本 ID，不显示脚本日志。进程意外重启会标记未完成任务为 `interrupted`，不会自动重试破坏性操作，需操作者检查服务器。CLI 运维期间请勿并行提交后台任务。执行器安装时不强制重启已有服务，代码更新请在确认无维护任务时手动重启配置指定的 systemd unit。
 
-统一后台与 Runtime 覆盖 Compose 文件、账号哈希数据库、Session 数据、API 配置均随已有备份保存/恢复；维护任务账本留在宿主机，不回滚任务历史。旧备份格式仍可读取。不开启定时任务、云存储、多管理员、角色权限、多租户或统计报表。未来在同一入口扩展多 AI、多渠道、多域名、多知识库与多平台。
+统一后台与 Runtime 覆盖 Compose 文件、管理员配置数据库、Session 数据、API 配置均随已有备份保存/恢复；维护任务账本留在宿主机，不回滚任务历史。旧备份格式仍可读取。不开启定时任务、云存储、多管理员、角色权限、多租户或统计报表。未来在同一入口扩展多 AI、多渠道、多域名、多知识库与多平台。
 
 测试：
 
@@ -82,7 +83,7 @@ ADMIN_TEST_PYTHON="$PWD/runtime/admin-venv/bin/python" bash tests/admin-installe
 runtime/admin-venv/bin/python tests/admin_compose_check.py
 ```
 
-可用 `ADMIN_TEST_PYTHON` 指定 fixture 的 Python、`TEST_COMPOSE_BINARY` 指定独立 Compose 可执行文件；检查只输出结论，不打印解析后的敏感环境配置。安全属性参考 [Starlette Cookie 接口](https://starlette.dev/responses/) 和 [Python 密码派生函数](https://docs.python.org/3.12/library/hashlib.html#hashlib.pbkdf2_hmac)。
+可用 `ADMIN_TEST_PYTHON` 指定 fixture 的 Python、`TEST_COMPOSE_BINARY` 指定独立 Compose 可执行文件；检查只输出结论，不打印解析后的敏感环境配置。Cookie 属性参考 [Starlette Cookie 接口](https://starlette.dev/responses/)。
 
 `admin-installer-fixture-test.sh` 在隔离副本中执行真实 `install.sh` 入口，覆盖 Ubuntu 22.04 / 24.04 元数据、首次成功、重复安装、失败后续跑及完成提示；Docker、Nginx、Certbot、systemd 等外部操作使用替身，宿主写操作限制在临时目录，不是实际服务器部署测试。
 
@@ -195,7 +196,7 @@ AI_RUNTIME_TEST_PYTHON="$PWD/runtime/ai-runtime-venv/bin/python" bash tests/mana
 安装器按照以下顺序执行：
 
 1. 创建或加载 `.env`，交互收集缺失的非敏感配置；
-2. 自动生成缺失的 Secret 和管理员初始密码；
+2. 自动生成缺失的 Secret，初始化管理员默认配置（不覆盖已有账号）；
 3. 检查 Ubuntu 版本、权限和服务器资源；
 4. 检查或安装 Docker 与 Docker Compose；
 5. 配置并启动 PostgreSQL、Redis、Chatwoot 和 Sidekiq；
@@ -204,7 +205,7 @@ AI_RUNTIME_TEST_PYTHON="$PWD/runtime/ai-runtime-venv/bin/python" bash tests/mana
 8. 检查域名解析与 Nginx HTTP-01 前置条件；
 9. 申请 Let's Encrypt 证书并切换 HTTPS；
 10. 安装续签 deploy hook、启用 Certbot timer 并执行 dry-run；
-11. 执行健康检查并输出访问地址；启用 AI Service 时一次性显示管理员初始密码。
+11. 执行健康检查并输出访问地址；启用统一后台时显示公开初始凭据及改密提醒。
 
 入口脚本通过注册步骤调用各个模块。模块之间不直接依赖，只通过 `lib/` 中的公共接口共享日志、配置、状态和校验能力，为重复执行和断点恢复预留基础。
 

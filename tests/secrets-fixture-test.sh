@@ -154,24 +154,4 @@ for existing_value in \
   fi
 done
 
-# The same canonical path is used by both nonce generation and Admin output.
-export INSTALLER_ADMIN_ONCE_FILE="${TEST_TEMP_ROOT}/.installer-admin-password-once"
-secrets_ensure_admin_nonce >"${TEST_TEMP_ROOT}/nonce.log" 2>&1
-readonly FIRST_NONCE="$(<"${INSTALLER_ADMIN_ONCE_FILE}")"
-[[ "${FIRST_NONCE}" =~ ^[a-f0-9]{64}$ ]]
-secrets_ensure_admin_nonce >>"${TEST_TEMP_ROOT}/nonce.log" 2>&1
-[[ "$(<"${INSTALLER_ADMIN_ONCE_FILE}")" == "${FIRST_NONCE}" ]]
-if grep -Fq -- "${FIRST_NONCE}" "${TEST_TEMP_ROOT}/nonce.log"; then exit 1; fi
-if [[ "${OSTYPE:-}" != msys* && "${OSTYPE:-}" != cygwin* &&
-  "$(stat -c '%a' "${INSTALLER_ADMIN_ONCE_FILE}")" != 600 ]]; then exit 1; fi
-printf '%s' 'invalid-nonce' >"${INSTALLER_ADMIN_ONCE_FILE}"
-if secrets_ensure_admin_nonce >>"${TEST_TEMP_ROOT}/nonce.log" 2>&1; then
-  printf '%s\n' 'An invalid existing nonce must not be silently replaced.' >&2; exit 1
-fi
-[[ "$(<"${INSTALLER_ADMIN_ONCE_FILE}")" == invalid-nonce ]]
-if INSTALLER_ADMIN_ONCE_FILE="${TEST_TEMP_ROOT}/different-marker" secrets_ensure_admin_nonce >>"${TEST_TEMP_ROOT}/nonce.log" 2>&1; then
-  printf '%s\n' 'A different administrator nonce filename was accepted.' >&2; exit 1
-fi
-[[ ! -e "${TEST_TEMP_ROOT}/different-marker" ]]
-
 printf '%s\n' 'Secrets fixture test passed.'
