@@ -104,6 +104,40 @@ validation_is_exact_pgvector_tag() {
   [[ "${value}" =~ ^[0-9]+\.[0-9]+\.[0-9]+-pg[0-9]+(-[a-z0-9][a-z0-9.-]*)?$ ]]
 }
 
+validation_is_pinned_container_image() {
+  local value="$1"
+  local image_component
+  local tag
+
+  [[ -n "${value}" && "${value}" != *[[:space:]]* ]] || return 1
+
+  if [[ "${value}" =~ @sha256:[a-fA-F0-9]{64}$ ]]; then
+    return 0
+  fi
+
+  image_component="${value##*/}"
+  [[ "${image_component}" == *:* ]] || return 1
+  tag="${image_component##*:}"
+
+  [[ "${tag}" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]] &&
+    [[ "${tag,,}" != "latest" ]]
+}
+
+validation_has_minimum_length() {
+  local value="$1"
+  local minimum="$2"
+
+  validation_is_positive_integer "${minimum}" && ((${#value} >= minimum))
+}
+
+validation_is_safe_container_path() {
+  local value="$1"
+
+  [[ "${value}" == /* ]] &&
+    [[ "${value}" != *..* ]] &&
+    [[ "${value}" =~ ^/[A-Za-z0-9._/-]+$ ]]
+}
+
 validation_validate_base_config() {
   if [[ "${CONFIG_LOADED}" != "true" ]]; then
     die "A populated .env configuration file is required before installation."

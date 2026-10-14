@@ -11,6 +11,7 @@ case "${1:-}" in
     ;;
   compose)
     shift
+    compose_arguments="$*"
 
     if [[ "${1:-}" == "version" ]]; then
       printf '%s\n' 'Docker Compose version v5.0.0-fixture'
@@ -30,7 +31,11 @@ case "${1:-}" in
 
     case "${1:-}" in
       ps)
-        printf '%s\n' postgres redis rails sidekiq
+        if [[ "${compose_arguments}" == *"ai-customer-platform-ai-test"* ]]; then
+          printf '%s\n' ai-service ai-admin
+        else
+          printf '%s\n' postgres redis rails sidekiq
+        fi
         ;;
       config | pull | up | exec | run)
         ;;

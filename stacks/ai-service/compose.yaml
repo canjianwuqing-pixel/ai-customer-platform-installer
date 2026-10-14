@@ -1,0 +1,68 @@
+x-ai-security: &ai-security
+  init: true
+  restart: unless-stopped
+  cap_drop:
+    - ALL
+  security_opt:
+    - no-new-privileges:true
+  logging:
+    driver: local
+    options:
+      max-size: "${AI_LOG_MAX_SIZE:?AI_LOG_MAX_SIZE is required}"
+      max-file: "${AI_LOG_MAX_FILES:?AI_LOG_MAX_FILES is required}"
+
+services:
+  ai-service:
+    <<: *ai-security
+    image: "${AI_SERVICE_IMAGE:?AI_SERVICE_IMAGE is required}"
+    environment:
+      APP_ENV: production
+      SERVICE_DOMAIN: "${AI_SERVICE_DOMAIN:-}"
+      OPENAI_API_KEY: "${OPENAI_API_KEY:?OPENAI_API_KEY is required}"
+      AI_MODEL: "${AI_MODEL:?AI_MODEL is required}"
+      INTERNAL_API_TOKEN: "${AI_SERVICE_INTERNAL_TOKEN:?AI_SERVICE_INTERNAL_TOKEN is required}"
+      CHATWOOT_WEBHOOK_URL: "${CHATWOOT_WEBHOOK_URL:-}"
+      CHATWOOT_WEBHOOK_SECRET: "${CHATWOOT_WEBHOOK_SECRET:-}"
+      CHATWOOT_INBOX_ID: "${CHATWOOT_INBOX_ID:-}"
+      LOG_LEVEL: "${AI_LOG_LEVEL:?AI_LOG_LEVEL is required}"
+      LOG_SENSITIVE_DATA: "${AI_LOG_SENSITIVE_DATA:?AI_LOG_SENSITIVE_DATA is required}"
+    ports:
+      - "${AI_SERVICE_BIND_ADDRESS:?AI_SERVICE_BIND_ADDRESS is required}:${AI_SERVICE_HTTP_PORT:?AI_SERVICE_HTTP_PORT is required}:${AI_SERVICE_CONTAINER_PORT:?AI_SERVICE_CONTAINER_PORT is required}"
+    networks:
+      - ai-service
+    volumes:
+      - type: volume
+        source: ai_service_data
+        target: "${AI_SERVICE_DATA_PATH:?AI_SERVICE_DATA_PATH is required}"
+
+  ai-admin:
+    <<: *ai-security
+    image: "${AI_ADMIN_IMAGE:?AI_ADMIN_IMAGE is required}"
+    depends_on:
+      ai-service:
+        condition: service_started
+    environment:
+      APP_ENV: production
+      AI_SERVICE_BASE_URL: "http://ai-service:${AI_SERVICE_CONTAINER_PORT:?AI_SERVICE_CONTAINER_PORT is required}"
+      AI_SERVICE_INTERNAL_TOKEN: "${AI_SERVICE_INTERNAL_TOKEN:?AI_SERVICE_INTERNAL_TOKEN is required}"
+      ADMIN_USERNAME: "${AI_ADMIN_USERNAME:?AI_ADMIN_USERNAME is required}"
+      ADMIN_PASSWORD: "${AI_ADMIN_PASSWORD:?AI_ADMIN_PASSWORD is required}"
+      SESSION_SECRET: "${AI_ADMIN_SESSION_SECRET:?AI_ADMIN_SESSION_SECRET is required}"
+      LOG_LEVEL: "${AI_LOG_LEVEL:?AI_LOG_LEVEL is required}"
+      LOG_SENSITIVE_DATA: "${AI_LOG_SENSITIVE_DATA:?AI_LOG_SENSITIVE_DATA is required}"
+    ports:
+      - "${AI_ADMIN_BIND_ADDRESS:?AI_ADMIN_BIND_ADDRESS is required}:${AI_ADMIN_HTTP_PORT:?AI_ADMIN_HTTP_PORT is required}:${AI_ADMIN_CONTAINER_PORT:?AI_ADMIN_CONTAINER_PORT is required}"
+    networks:
+      - ai-service
+    volumes:
+      - type: volume
+        source: ai_admin_data
+        target: "${AI_ADMIN_DATA_PATH:?AI_ADMIN_DATA_PATH is required}"
+
+networks:
+  ai-service:
+    driver: bridge
+
+volumes:
+  ai_service_data:
+  ai_admin_data:

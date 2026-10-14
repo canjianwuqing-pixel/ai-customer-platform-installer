@@ -20,6 +20,10 @@ readonly -a MODULE_FILES=(
   "modules/chatwoot/configure.sh"
   "modules/chatwoot/install.sh"
   "modules/chatwoot/verify.sh"
+  "modules/ai-service/check.sh"
+  "modules/ai-service/configure.sh"
+  "modules/ai-service/install.sh"
+  "modules/ai-service/verify.sh"
   "modules/nginx/install.sh"
   "modules/nginx/configure.sh"
   "modules/nginx/verify.sh"
@@ -55,6 +59,10 @@ register_core_steps() {
   register_installer_step "chatwoot.configure" chatwoot_configure
   register_installer_step "chatwoot.install" chatwoot_install
   register_installer_step "chatwoot.verify" chatwoot_verify
+  register_installer_step "ai-service.check" ai_service_check
+  register_installer_step "ai-service.configure" ai_service_configure
+  register_installer_step "ai-service.install" ai_service_install
+  register_installer_step "ai-service.verify" ai_service_verify
   register_installer_step "nginx.install" nginx_install
   register_installer_step "nginx.configure" nginx_configure
   register_installer_step "nginx.verify" nginx_verify
