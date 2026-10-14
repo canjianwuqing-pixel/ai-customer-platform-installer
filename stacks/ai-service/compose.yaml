@@ -18,8 +18,10 @@ services:
     environment:
       APP_ENV: production
       SERVICE_DOMAIN: "${AI_SERVICE_DOMAIN:-}"
-      OPENAI_API_KEY: "${OPENAI_API_KEY:?OPENAI_API_KEY is required}"
-      AI_MODEL: "${AI_MODEL:?AI_MODEL is required}"
+      # Provider credentials and model selection may be configured later in
+      # the administration application.
+      OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
+      AI_MODEL: "${AI_MODEL:-}"
       INTERNAL_API_TOKEN: "${AI_SERVICE_INTERNAL_TOKEN:?AI_SERVICE_INTERNAL_TOKEN is required}"
       CHATWOOT_WEBHOOK_URL: "${CHATWOOT_WEBHOOK_URL:-}"
       CHATWOOT_WEBHOOK_SECRET: "${CHATWOOT_WEBHOOK_SECRET:-}"

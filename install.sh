@@ -69,10 +69,12 @@ register_core_steps() {
   register_installer_step "chatwoot.configure" chatwoot_configure
   register_installer_step "chatwoot.install" chatwoot_install
   register_installer_step "chatwoot.verify" chatwoot_verify
-  register_installer_step "ai-service.check" ai_service_check
-  register_installer_step "ai-service.configure" ai_service_configure
-  register_installer_step "ai-service.install" ai_service_install
-  register_installer_step "ai-service.verify" ai_service_verify
+  if [[ "${AI_SERVICE_ENABLED:-false}" == "true" ]]; then
+    register_installer_step "ai-service.check" ai_service_check
+    register_installer_step "ai-service.configure" ai_service_configure
+    register_installer_step "ai-service.install" ai_service_install
+    register_installer_step "ai-service.verify" ai_service_verify
+  fi
   register_installer_step "nginx.install" nginx_install
   register_installer_step "nginx.configure" nginx_configure
   register_installer_step "nginx.verify" nginx_verify
@@ -102,6 +104,7 @@ on_error() {
 
 run_install_command() {
   setup_prepare_configuration
+  setup_configure_optional_modules
   secrets_ensure
   setup_mark_admin_password_pending
   validation_validate_base_config
@@ -201,7 +204,7 @@ main() {
   log_info "AI customer platform installer started."
 
   if [[ "${command_name}" != "install" ]]; then
-    config_load_optional "${CONFIG_FILE:-${INSTALLER_ROOT}/.env}"
+    config_load_installer_configuration "${CONFIG_FILE:-${INSTALLER_ROOT}/.env}"
   fi
 
   if (($# > 0)); then

@@ -2,6 +2,7 @@
 set -Eeuo pipefail
 
 SETUP_INPUT_VALUE=""
+AI_SERVICE_ENABLED="false"
 
 setup_template_file() {
   printf '%s\n' "${INSTALLER_ENV_TEMPLATE:-${INSTALLER_ROOT}/.env.example}"
@@ -46,17 +47,6 @@ setup_prompt_value() {
   done
 }
 
-setup_validate_api_key() {
-  local value="$1"
-  validation_has_minimum_length "${value}" 20 &&
-    [[ "${value}" != *[[:space:]]* ]]
-}
-
-setup_validate_model_name() {
-  local value="$1"
-  [[ "${value}" =~ ^[A-Za-z0-9][A-Za-z0-9._:/-]*$ ]]
-}
-
 setup_collect_configuration() {
   local restore_xtrace="false"
   local -a changed_keys=()
@@ -92,40 +82,6 @@ setup_collect_configuration() {
     changed_keys+=(AI_ADMIN_USERNAME)
   fi
 
-  if [[ -z "${AI_SERVICE_IMAGE:-}" ]]; then
-    setup_prompt_value \
-      "请输入 AI Service 固定版本镜像：" \
-      "registry.example.com/ai-service:1.0.0" \
-      validation_is_pinned_container_image
-    AI_SERVICE_IMAGE="${SETUP_INPUT_VALUE}"
-    export AI_SERVICE_IMAGE
-    changed_keys+=(AI_SERVICE_IMAGE)
-  fi
-
-  if [[ -z "${AI_ADMIN_IMAGE:-}" ]]; then
-    setup_prompt_value \
-      "请输入 AI 管理后台固定版本镜像：" \
-      "registry.example.com/ai-admin:1.0.0" \
-      validation_is_pinned_container_image
-    AI_ADMIN_IMAGE="${SETUP_INPUT_VALUE}"
-    export AI_ADMIN_IMAGE
-    changed_keys+=(AI_ADMIN_IMAGE)
-  fi
-
-  if [[ -z "${OPENAI_API_KEY:-}" ]]; then
-    setup_prompt_value "请输入 OpenAI API Key：" "" setup_validate_api_key true
-    OPENAI_API_KEY="${SETUP_INPUT_VALUE}"
-    export OPENAI_API_KEY
-    changed_keys+=(OPENAI_API_KEY)
-  fi
-
-  if [[ -z "${AI_MODEL:-}" ]]; then
-    setup_prompt_value "请输入 AI 模型名称：" "your-model-name" setup_validate_model_name
-    AI_MODEL="${SETUP_INPUT_VALUE}"
-    export AI_MODEL
-    changed_keys+=(AI_MODEL)
-  fi
-
   if ((${#changed_keys[@]} > 0)); then
     config_save_keys "${CONFIG_FILE}" "${changed_keys[@]}"
     log_ok "Saved installation wizard configuration without logging sensitive values."
@@ -146,13 +102,41 @@ setup_prepare_configuration() {
     config_create_from_template "${CONFIG_FILE}" "${template_file}"
   fi
 
-  config_load_optional "${CONFIG_FILE}"
+  config_load_installer_configuration "${CONFIG_FILE}"
   if [[ "${CONFIG_LOADED}" != "true" ]]; then
     log_error "The installation configuration could not be loaded."
     return 1
   fi
 
+  config_materialize_missing_defaults \
+    "${CONFIG_FILE}" \
+    "$(config_images_file)" \
+    "$(config_default_file)"
+
   setup_collect_configuration
+}
+
+setup_configure_optional_modules() {
+  AI_SERVICE_ENABLED="false"
+
+  if [[ -z "${AI_SERVICE_IMAGE:-}" ]]; then
+    if [[ -n "${AI_ADMIN_IMAGE:-}" ]]; then
+      log_warn "AI_ADMIN_IMAGE is set without AI_SERVICE_IMAGE; the optional AI Service module will be skipped."
+    else
+      log_info "AI Service image is not configured; the optional module will be skipped."
+    fi
+    export AI_SERVICE_ENABLED
+    return 0
+  fi
+
+  if [[ -z "${AI_ADMIN_IMAGE:-}" ]]; then
+    log_error "AI_ADMIN_IMAGE is required when AI_SERVICE_IMAGE enables the optional AI Service module."
+    return 1
+  fi
+
+  AI_SERVICE_ENABLED="true"
+  export AI_SERVICE_ENABLED
+  log_info "AI Service images are configured; the optional module is enabled."
 }
 
 setup_mark_admin_password_pending() {
@@ -193,7 +177,7 @@ setup_print_completion() {
     log_error "Administrator password display marker must be a regular file."
     return 1
   fi
-  if [[ -f "${pending_file}" ]]; then
+  if [[ "${AI_SERVICE_ENABLED:-false}" == "true" && -f "${pending_file}" ]]; then
     if [[ -z "${AI_ADMIN_PASSWORD:-}" ]]; then
       log_error "Administrator password is unavailable for the one-time completion display."
       return 1
@@ -203,6 +187,21 @@ setup_print_completion() {
       return 1
     fi
     password_line="初始密码：${AI_ADMIN_PASSWORD}"
+  fi
+
+  if [[ "${AI_SERVICE_ENABLED:-false}" != "true" ]]; then
+    printf '%s\n' \
+      '================================' \
+      '' \
+      'AI Customer Platform 安装完成' \
+      '' \
+      '网站地址：' \
+      "https://${DOMAIN}" \
+      '' \
+      'AI Service 未配置，可后续启用。' \
+      '' \
+      '================================'
+    return 0
   fi
 
   printf '%s\n' \

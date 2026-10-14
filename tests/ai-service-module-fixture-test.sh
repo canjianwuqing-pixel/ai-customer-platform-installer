@@ -119,4 +119,13 @@ if (
   exit 1
 fi
 
+if ! (
+  OPENAI_API_KEY=''
+  AI_MODEL=''
+  ai_service_validate_config >/dev/null 2>&1
+); then
+  printf '%s\n' 'The AI Service configuration still requires an install-time OpenAI API key or model.' >&2
+  exit 1
+fi
+
 printf '%s\n' 'AI Service fixture test passed.'

@@ -50,8 +50,6 @@ ai_service_validate_config() {
   validation_require_keys \
     AI_SERVICE_IMAGE \
     AI_ADMIN_IMAGE \
-    OPENAI_API_KEY \
-    AI_MODEL \
     AI_SERVICE_INTERNAL_TOKEN \
     AI_ADMIN_USERNAME \
     AI_ADMIN_PASSWORD \
@@ -81,14 +79,17 @@ ai_service_validate_config() {
     return 1
   fi
 
-  if ! ai_service_validate_secret OPENAI_API_KEY 20 ||
-    ! ai_service_validate_secret AI_SERVICE_INTERNAL_TOKEN 32 ||
+  if ! ai_service_validate_secret AI_SERVICE_INTERNAL_TOKEN 32 ||
     ! ai_service_validate_secret AI_ADMIN_PASSWORD 16 ||
     ! ai_service_validate_secret AI_ADMIN_SESSION_SECRET 32; then
     return 1
   fi
 
-  if [[ ! "${AI_MODEL}" =~ ^[A-Za-z0-9][A-Za-z0-9._:/-]*$ ]]; then
+  if [[ -n "${OPENAI_API_KEY:-}" ]] && ! ai_service_validate_secret OPENAI_API_KEY 20; then
+    return 1
+  fi
+
+  if [[ -n "${AI_MODEL:-}" && ! "${AI_MODEL}" =~ ^[A-Za-z0-9][A-Za-z0-9._:/-]*$ ]]; then
     log_error "AI_MODEL contains unsupported characters."
     return 1
   fi

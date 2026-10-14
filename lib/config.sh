@@ -4,6 +4,85 @@ set -Eeuo pipefail
 CONFIG_LOADED="false"
 CONFIG_FILE="${CONFIG_FILE:-}"
 
+config_default_file() {
+  printf '%s\n' "${INSTALLER_DEFAULT_CONFIG_FILE:-${INSTALLER_ROOT}/config/default.env}"
+}
+
+config_images_file() {
+  printf '%s\n' "${INSTALLER_IMAGES_CONFIG_FILE:-${INSTALLER_ROOT}/config/images.env}"
+}
+
+config_load_installer_configuration() {
+  local user_config_file="$1"
+  local default_config_file
+  local images_config_file
+  local config_layer
+
+  default_config_file="$(config_default_file)"
+  images_config_file="$(config_images_file)"
+
+  for config_layer in "${default_config_file}" "${images_config_file}"; do
+    if [[ ! -f "${config_layer}" || ! -r "${config_layer}" ]]; then
+      log_error "Installer configuration layer is not readable: ${config_layer}."
+      return 1
+    fi
+  done
+
+  if [[ ! -f "${user_config_file}" || ! -r "${user_config_file}" ]]; then
+    log_error "User configuration file is not readable: ${user_config_file}."
+    return 1
+  fi
+
+  CONFIG_FILE="${user_config_file}"
+  CONFIG_LOADED="false"
+
+  # Lowest precedence first. A user's .env is loaded last and therefore wins.
+  config_load_file "${default_config_file}"
+  config_load_file "${images_config_file}"
+  config_load_file "${CONFIG_FILE}"
+
+  CONFIG_LOADED="true"
+  log_info "Loaded installer defaults, pinned image versions, and user overrides."
+}
+
+config_materialize_missing_defaults() {
+  local target_file="$1"
+  shift
+  local source_file
+  local line
+  local key
+  local -a missing_keys=()
+  local -A target_keys=()
+  local -A queued_keys=()
+
+  while IFS= read -r line || [[ -n "${line}" ]]; do
+    line="${line%$'\r'}"
+    if [[ "${line}" =~ ^[[:space:]]*([A-Za-z_][A-Za-z0-9_]*)= ]]; then
+      target_keys["${BASH_REMATCH[1]}"]=true
+    fi
+  done <"${target_file}"
+
+  # Callers pass higher-precedence layers first so duplicate default keys keep
+  # the value already present in the environment after layered loading.
+  for source_file in "$@"; do
+    while IFS= read -r line || [[ -n "${line}" ]]; do
+      line="${line%$'\r'}"
+      if [[ "${line}" =~ ^[[:space:]]*([A-Za-z_][A-Za-z0-9_]*)= ]]; then
+        key="${BASH_REMATCH[1]}"
+        if [[ -z "${target_keys[${key}]+present}" && -z "${queued_keys[${key}]+queued}" ]]; then
+          missing_keys+=("${key}")
+          queued_keys["${key}"]=true
+        fi
+      fi
+    done <"${source_file}"
+  done
+
+  if ((${#missing_keys[@]} > 0)); then
+    config_save_keys "${target_file}" "${missing_keys[@]}"
+    log_ok "Stored installer-managed defaults in the protected configuration file."
+  fi
+}
+
 config_load_optional() {
   local config_file="$1"
 
