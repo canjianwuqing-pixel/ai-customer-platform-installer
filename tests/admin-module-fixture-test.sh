@@ -55,7 +55,7 @@ setup_configure_optional_modules >"${TEST_TEMP}/setup.log"
 secrets_ensure >>"${TEST_TEMP}/setup.log"
 readonly OLD_PASSWORD="${AI_ADMIN_PASSWORD}"
 admin_prepare_credentials >>"${TEST_TEMP}/setup.log"
-[[ -z "${AI_ADMIN_PASSWORD}" && -z "${AI_ADMIN_SESSION_SECRET}" ]]
+[[ "${AI_ADMIN_PASSWORD}" == "${OLD_PASSWORD}" && -n "${AI_ADMIN_SESSION_SECRET}" ]]
 [[ "${ADMIN_PASSWORD}" == "${OLD_PASSWORD}" && -z "${ADMIN_PASSWORD_HASH}" ]]
 if grep -Fq -- "${OLD_PASSWORD}" "${TEST_TEMP}/setup.log"; then
   printf '%s\n' 'Administrator password was exposed in setup logs.' >&2; exit 1
@@ -122,7 +122,9 @@ ADMIN_ENABLED=true
 AI_ADMIN_PASSWORD="" AI_ADMIN_SESSION_SECRET=""
 ADMIN_MAINTENANCE_STATE_DIR="${TEST_TEMP}/state"
 ADMIN_MAINTENANCE_SOCKET_DIR="${TEST_TEMP}/socket"
+config_save_keys "${CONFIG_FILE}" ADMIN_ENABLED ADMIN_MAINTENANCE_STATE_DIR ADMIN_MAINTENANCE_SOCKET_DIR
 setup_configure_optional_modules >"${TEST_TEMP}/fresh-setup.log"
+secrets_ensure >>"${TEST_TEMP}/fresh-setup.log"
 admin_prepare_credentials >"${TEST_TEMP}/fresh.log"
 [[ "${ADMIN_USERNAME}" == admin && "${ADMIN_PASSWORD}" == admin && -z "${ADMIN_PASSWORD_HASH}" ]]
 admin_prepare_credentials >>"${TEST_TEMP}/fresh.log"
@@ -139,12 +141,13 @@ if grep -Fq 123456 "${TEST_TEMP}/fresh.log"; then exit 1; fi
 ADMIN_PASSWORD_HASH=pbkdf2_sha256:600000:00000000000000000000000000000000:0000000000000000000000000000000000000000000000000000000000000000
 config_save_keys "${CONFIG_FILE}" ADMIN_PASSWORD_HASH
 admin_prepare_credentials >>"${TEST_TEMP}/fresh.log"
-[[ -z "${ADMIN_PASSWORD}" && -n "${ADMIN_PASSWORD_HASH}" ]]
+[[ "${ADMIN_PASSWORD}" == 123456 && -n "${ADMIN_PASSWORD_HASH}" ]]
 admin_print_completion >"${TEST_TEMP}/legacy-completion.log"
 grep -Fq '保留已有密码' "${TEST_TEMP}/legacy-completion.log"
 [[ -z "$(find "${TEST_TEMP}" -name '.installer-admin-password-*' -print -quit)" ]]
 if [[ "${OSTYPE:-}" != msys* && "${OSTYPE:-}" != cygwin* && "$(/usr/bin/stat -c %a "${CONFIG_FILE}")" != 600 ]]; then exit 1; fi
 ADMIN_ENABLED=false
+nginx_initialize_config
 nginx_render_template "${TEST_TEMP}/disabled.conf"
 if grep -Fq 'location = /admin' "${TEST_TEMP}/disabled.conf"; then exit 1; fi
 printf '%s\n' 'Unified Admin default/custom credentials, legacy compatibility, Compose and Nginx fixtures passed.'

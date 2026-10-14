@@ -3,6 +3,29 @@ set -Eeuo pipefail
 
 UPGRADE_RECORD_FORMAT_VERSION="1"
 
+upgrade_capture_chatwoot_source() {
+  set +x
+  local role id image tag
+  for role in "${BACKUP_CHATWOOT_STORAGE_SERVICE}" "${BACKUP_CHATWOOT_DATABASE_SERVICE}" "${REDIS_HOST}"; do
+    id="$(docker_execute ps --all --filter "label=com.docker.compose.project=${CHATWOOT_COMPOSE_PROJECT}" --filter "label=com.docker.compose.service=${role}" --format '{{.ID}}')" || return 1
+    [[ -n "${id}" ]] || { log_error 'Required deployed Chatwoot container is missing.'; return 1; }
+    image="$(docker_execute inspect --format '{{.Config.Image}}' "${id%%$'\n'*}")" || return 1
+    tag="${image##*:}"
+    if [[ "${role}" == "${BACKUP_CHATWOOT_STORAGE_SERVICE}" ]]; then
+      validation_is_exact_semver_tag "${tag}" || { log_error 'Cannot identify the deployed Chatwoot version.'; return 1; }
+      CHATWOOT_VERSION="${tag}"
+      config_verify_deployed_credentials "${id}" || return 1
+    elif [[ "${role}" == "${BACKUP_CHATWOOT_DATABASE_SERVICE}" ]]; then
+      validation_is_exact_pgvector_tag "${tag}" || return 1
+      POSTGRES_VERSION="${tag}"
+    else
+      validation_is_exact_semver_tag "${tag}" || return 1
+      REDIS_VERSION="${tag}"
+    fi
+  done
+  config_save_keys "${upgrade_source_file}" CHATWOOT_VERSION POSTGRES_VERSION REDIS_VERSION
+}
+
 upgrade_initialize_config() {
   chatwoot_initialize_config
   ai_service_initialize_config
@@ -26,8 +49,6 @@ upgrade_validate_config() {
   validation_require_keys \
     UPGRADE_RECORD_DIR \
     UPGRADE_CHATWOOT_VERSION \
-    UPGRADE_AI_SERVICE_IMAGE \
-    UPGRADE_AI_ADMIN_IMAGE \
     UPGRADE_CHATWOOT_MIGRATION_SERVICE \
     UPGRADE_CHATWOOT_APP_SERVICES \
     UPGRADE_AI_APP_SERVICES
@@ -42,8 +63,8 @@ upgrade_validate_config() {
     return 1
   fi
 
-  if ! validation_is_pinned_container_image "${UPGRADE_AI_SERVICE_IMAGE}" ||
-    ! validation_is_pinned_container_image "${UPGRADE_AI_ADMIN_IMAGE}"; then
+  if config_ai_enabled && { ! validation_is_pinned_container_image "${UPGRADE_AI_SERVICE_IMAGE}" ||
+    ! validation_is_pinned_container_image "${UPGRADE_AI_ADMIN_IMAGE}"; }; then
     log_error "Upgrade AI images must use fixed tags or sha256 digests; latest is forbidden."
     return 1
   fi
@@ -63,11 +84,12 @@ upgrade_validate_config() {
 }
 
 upgrade_compare_chatwoot_versions() {
-  local current_without_prefix="${CHATWOOT_VERSION#v}"
+  local current="${UPGRADE_FROM_CHATWOOT:-${CHATWOOT_VERSION}}"
+  local current_without_prefix="${current#v}"
   local target_without_prefix="${UPGRADE_CHATWOOT_VERSION#v}"
   local oldest
 
-  [[ "${CHATWOOT_VERSION}" == "${UPGRADE_CHATWOOT_VERSION}" ]] && return 0
+  [[ "${current}" == "${UPGRADE_CHATWOOT_VERSION}" ]] && return 0
   oldest="$(printf '%s\n%s\n' "${current_without_prefix}" "${target_without_prefix}" | sort -V | head -n 1)"
   if [[ "${oldest}" != "${current_without_prefix}" ]]; then
     log_error "UPGRADE_CHATWOOT_VERSION is older than CHATWOOT_VERSION; use rollback for downgrades."
@@ -76,9 +98,10 @@ upgrade_compare_chatwoot_versions() {
 }
 
 upgrade_validate_target_change() {
-  if [[ "${CHATWOOT_VERSION}" == "${UPGRADE_CHATWOOT_VERSION}" ]] &&
-    [[ "${AI_SERVICE_IMAGE}" == "${UPGRADE_AI_SERVICE_IMAGE}" ]] &&
-    [[ "${AI_ADMIN_IMAGE}" == "${UPGRADE_AI_ADMIN_IMAGE}" ]]; then
+  if [[ "${UPGRADE_FROM_CHATWOOT}" == "${UPGRADE_CHATWOOT_VERSION}" ]] &&
+    [[ "${UPGRADE_FROM_AI_SERVICE}" == "${UPGRADE_AI_SERVICE_IMAGE}" ]] &&
+    [[ "${UPGRADE_FROM_AI_ADMIN}" == "${UPGRADE_AI_ADMIN_IMAGE}" ]] &&
+    [[ "${CONFIG_SOURCE_ADMIN_ENABLED}" == "${ADMIN_ENABLED:-false}" ]]; then
     log_error "The configured upgrade targets are identical to the active versions."
     return 1
   fi
@@ -117,7 +140,7 @@ upgrade_validate_target_compose() {
     return 1
   fi
 
-  if ! AI_SERVICE_IMAGE="${UPGRADE_AI_SERVICE_IMAGE}" \
+  if config_ai_enabled && ! AI_SERVICE_IMAGE="${UPGRADE_AI_SERVICE_IMAGE}" \
     AI_ADMIN_IMAGE="${UPGRADE_AI_ADMIN_IMAGE}" \
     ai_service_compose config --quiet; then
     log_error "Target AI Service Compose configuration is invalid."
@@ -145,16 +168,14 @@ upgrade_check() {
     return 1
   }
 
-  chatwoot_configure
-  ai_service_configure
-  backup_check
-  upgrade_validate_config
-  upgrade_validate_target_change
-  upgrade_validate_target_compose
+  chatwoot_configure || return 1
+  if config_ai_enabled; then ai_service_configure || return 1; fi
+  backup_check || return 1
   upgrade_verify_running_service_list \
-    chatwoot_compose "${BACKUP_CHATWOOT_REQUIRED_SERVICES}" "Chatwoot"
-  upgrade_verify_running_service_list \
-    ai_service_compose "${BACKUP_AI_REQUIRED_SERVICES}" "AI Service"
+    chatwoot_compose "${BACKUP_CHATWOOT_REQUIRED_SERVICES}" "Chatwoot" || return 1
+  if config_ai_enabled; then
+    upgrade_verify_running_service_list ai_service_compose "${BACKUP_AI_REQUIRED_SERVICES}" "AI Service" || return 1
+  fi
 
   log_ok "[upgrade] Current installation and fixed-version upgrade targets are valid."
 }
@@ -164,9 +185,8 @@ upgrade_check_rollback_prerequisites() {
   log_info "[rollback] Checking rollback prerequisites."
 
   chatwoot_configure
-  ai_service_configure
+  if config_ai_enabled; then ai_service_configure; fi
   backup_check
-  upgrade_validate_config
 
   log_ok "[rollback] Rollback prerequisites are valid."
 }

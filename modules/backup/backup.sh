@@ -114,8 +114,11 @@ backup_suspend_application_services() {
 
   backup_record_running_services \
     chatwoot_compose "${BACKUP_CHATWOOT_APP_SERVICES}" BACKUP_CHATWOOT_RESTART_SERVICES || return 1
-  backup_record_running_services \
-    ai_service_compose "${BACKUP_AI_APP_SERVICES}" BACKUP_AI_RESTART_SERVICES || return 1
+  BACKUP_AI_RESTART_SERVICES=()
+  if config_ai_enabled; then
+    backup_record_running_services \
+      ai_service_compose "${BACKUP_AI_APP_SERVICES}" BACKUP_AI_RESTART_SERVICES || return 1
+  fi
 
   log_info "[backup] Stopping configured application services for a consistent snapshot."
   if ! chatwoot_compose stop "${chatwoot_services[@]}"; then
@@ -124,7 +127,7 @@ backup_suspend_application_services() {
     return 1
   fi
 
-  if ! ai_service_compose stop "${ai_services[@]}"; then
+  if config_ai_enabled && ! ai_service_compose stop "${ai_services[@]}"; then
     log_error "Failed to stop the configured AI application services."
     backup_resume_application_services || true
     return 1
@@ -264,6 +267,7 @@ backup_write_manifest() {
     printf 'REDIS_VERSION=%s\n' "${REDIS_VERSION}"
     printf 'AI_SERVICE_IMAGE=%s\n' "${AI_SERVICE_IMAGE}"
     printf 'AI_ADMIN_IMAGE=%s\n' "${AI_ADMIN_IMAGE}"
+    if config_ai_enabled; then printf 'AI_ENABLED=true\n'; else printf 'AI_ENABLED=false\n'; fi
     printf 'CHATWOOT_COMPOSE_PROJECT=%s\n' "${CHATWOOT_COMPOSE_PROJECT}"
     printf 'AI_SERVICE_COMPOSE_PROJECT=%s\n' "${AI_SERVICE_COMPOSE_PROJECT}"
     printf 'DATABASE_NAME=%s\n' "${DATABASE_NAME}"
@@ -352,12 +356,14 @@ backup_create_payload() {
   backup_archive_container_path \
     "${storage_container_id}" "${BACKUP_CHATWOOT_STORAGE_PATH}" \
     "${staging_directory}/data/chatwoot-storage.${archive_suffix}" || return 1
-  backup_archive_container_path \
-    "${ai_data_container_id}" "${AI_SERVICE_DATA_PATH}" \
-    "${staging_directory}/data/ai-service-data.${archive_suffix}" || return 1
-  backup_archive_container_path \
-    "${ai_admin_container_id}" "${AI_ADMIN_DATA_PATH}" \
-    "${staging_directory}/data/ai-admin-data.${archive_suffix}" || return 1
+  if config_ai_enabled; then
+    backup_archive_container_path \
+      "${ai_data_container_id}" "${AI_SERVICE_DATA_PATH}" \
+      "${staging_directory}/data/ai-service-data.${archive_suffix}" || return 1
+    backup_archive_container_path \
+      "${ai_admin_container_id}" "${AI_ADMIN_DATA_PATH}" \
+      "${staging_directory}/data/ai-admin-data.${archive_suffix}" || return 1
+  fi
   backup_write_configuration_files "${staging_directory}" || return 1
   backup_write_manifest "${backup_id}" "${staging_directory}" || return 1
   backup_write_checksums "${staging_directory}" || return 1
@@ -365,12 +371,12 @@ backup_create_payload() {
 }
 
 backup_create() {
+  local keep_quiesced="${1:-false}"
   local backup_id
   local staging_directory
   local final_directory
   local storage_container_id
-  local ai_data_container_id
-  local ai_admin_container_id
+  local ai_data_container_id="" ai_admin_container_id=""
   local payload_result=0
   local resume_result=0
 
@@ -388,6 +394,7 @@ backup_create() {
     backup_remove_directory_safely "${staging_directory}"
     return 1
   }
+  if config_ai_enabled; then
   ai_data_container_id="$(backup_get_container_id ai_service_compose "${BACKUP_AI_DATA_SERVICE}")" || {
     backup_remove_directory_safely "${staging_directory}"
     return 1
@@ -396,6 +403,7 @@ backup_create() {
     backup_remove_directory_safely "${staging_directory}"
     return 1
   }
+  fi
 
   if ! backup_suspend_application_services; then
     backup_remove_directory_safely "${staging_directory}"
@@ -408,8 +416,8 @@ backup_create() {
     payload_result=1
   fi
 
-  if ! backup_resume_application_services; then
-    resume_result=1
+  if [[ "${keep_quiesced}" != true || "${payload_result}" != 0 ]]; then
+    if ! backup_resume_application_services; then resume_result=1; fi
   fi
 
   if ((payload_result != 0)); then
@@ -419,24 +427,27 @@ backup_create() {
   fi
 
   if ! backup_verify_directory "${staging_directory}" "${backup_id}"; then
+    backup_resume_application_services || true
     backup_remove_directory_safely "${staging_directory}"
     log_error "Backup verification failed; the incomplete version was removed."
     return 1
   fi
 
   if [[ -e "${final_directory}" ]]; then
+    backup_resume_application_services || true
     backup_remove_directory_safely "${staging_directory}"
     log_error "Backup version already exists; refusing to overwrite it."
     return 1
   fi
 
   if ! mv -- "${staging_directory}" "${final_directory}"; then
+    backup_resume_application_services || true
     backup_remove_directory_safely "${staging_directory}"
     log_error "Failed to finalize the verified backup version."
     return 1
   fi
   BACKUP_LAST_CREATED_ID="${backup_id}"
-  backup_apply_retention || return 1
+  backup_apply_retention || { backup_resume_application_services || true; return 1; }
   log_ok "[backup] Backup completed: ${backup_id}."
 
   if ((resume_result != 0)); then

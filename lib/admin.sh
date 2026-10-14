@@ -10,8 +10,9 @@ admin_prepare_credentials() {
   if [[ -n "${ADMIN_PASSWORD_HASH:-}" ]]; then
     # Hashes cannot be decoded. Runtime verifies the old password before
     # migrating it into persistent ADMIN_PASSWORD configuration.
-    ADMIN_PASSWORD=""
-  elif [[ -n "${AI_ADMIN_PASSWORD:-}" && ( -z "${ADMIN_PASSWORD:-}" || "${ADMIN_PASSWORD}" == admin ) ]]; then
+    ADMIN_PASSWORD="${ADMIN_PASSWORD-}"
+  elif [[ -z "${CONFIG_USER_KEYS[ADMIN_PASSWORD]+configured}" && -n "${AI_ADMIN_PASSWORD:-}" &&
+          ( -z "${ADMIN_PASSWORD:-}" || "${ADMIN_PASSWORD}" == admin ) ]]; then
     ADMIN_PASSWORD="${AI_ADMIN_PASSWORD}"
   else
     ADMIN_PASSWORD="${ADMIN_PASSWORD:-admin}"
@@ -29,8 +30,8 @@ admin_prepare_credentials() {
   [[ ${#ADMIN_SESSION_SECRET} -ge 32 && ${#ADMIN_MAINTENANCE_TOKEN} -ge 32 ]] || {
     log_error "Admin session and maintenance secrets must contain at least 32 characters."; return 1;
   }
-  # One account only. Retire the old names after migrating their values.
-  AI_ADMIN_PASSWORD="" AI_ADMIN_SESSION_SECRET="" AI_ADMIN_USERNAME=""
+  # Keep deprecated inputs for recovery if deployment fails. The unified
+  # container never consumes them, so they do not create a second account.
   export ADMIN_USERNAME ADMIN_PASSWORD ADMIN_SESSION_SECRET ADMIN_MAINTENANCE_TOKEN
   export AI_ADMIN_PASSWORD AI_ADMIN_SESSION_SECRET AI_ADMIN_USERNAME
   config_save_keys "${CONFIG_FILE}" "${keys[@]}"

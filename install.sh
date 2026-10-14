@@ -16,6 +16,7 @@ source "${INSTALLER_ROOT}/lib/records.sh"
 source "${INSTALLER_ROOT}/lib/services.sh"
 source "${INSTALLER_ROOT}/lib/domains.sh"
 source "${INSTALLER_ROOT}/lib/admin.sh"
+source "${INSTALLER_ROOT}/lib/lifecycle.sh"
 
 readonly -a MODULE_FILES=(
   "modules/system/check.sh"
@@ -74,6 +75,10 @@ register_core_steps() {
   register_installer_step "docker.check" docker_check
   register_installer_step "docker.install" docker_install
   register_installer_step "docker.verify" docker_verify
+  register_installer_step "configuration.verify" config_verify_deployed_credentials
+  if [[ "${ADMIN_ENABLED:-false}" == true ]]; then
+    register_installer_step "admin.check" admin_check
+  fi
   register_installer_step "chatwoot.configure" chatwoot_configure
   register_installer_step "chatwoot.install" chatwoot_install
   register_installer_step "chatwoot.verify" chatwoot_verify
@@ -115,15 +120,7 @@ on_error() {
 }
 
 run_install_command() {
-  setup_prepare_configuration
-  setup_configure_optional_modules
-  # Configuration-only initialization point for the future management core.
-  # No domain, service, channel, knowledge source, or model is created here.
-  services_load
-  domains_load
-  secrets_ensure
-  admin_prepare_credentials
-  validation_validate_base_config
+  config_prepare install "${CONFIG_FILE:-${INSTALLER_ROOT}/.env}"
   register_core_steps
   run_registered_steps
 }
@@ -159,8 +156,11 @@ run_restore_command() {
   done
 
   [[ -n "${backup_id}" ]] || die "A backup ID is required. Use ./restore.sh --list to view available backups."
-  validation_validate_base_config
-  backup_check
+  # Recovery validates the backup's complete candidate configuration, not the
+  # potentially damaged current credentials we are about to replace.
+  backup_initialize_config
+  backup_check_command_dependencies
+  docker_engine_is_available && docker_compose_is_available || die 'Restore requires Docker and Compose.'
   backup_restore "${backup_id}" "${confirmed}"
 }
 
@@ -213,9 +213,15 @@ run_rollback_command() {
 }
 
 main() {
+  set +x
   local command_name="${1:-install}"
 
   trap 'on_error "${LINENO}" "$?"' ERR
+
+  if [[ "${command_name}" == __prepare-configuration ]]; then
+    config_prepare_candidate "$2" "$3"
+    return 0
+  fi
 
   log_info "AI customer platform installer started."
 

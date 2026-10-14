@@ -6,6 +6,11 @@ backup_is_valid_version_id() {
   [[ "${backup_id}" =~ ^[0-9]{8}T[0-9]{6}Z(-[0-9]{2})?$ ]]
 }
 
+backup_contains_ai() {
+  # Before optional stacks were introduced every v1 backup contained AI data.
+  [[ "$(read_key_value_file "$1/manifest.env" AI_ENABLED || true)" != false ]]
+}
+
 backup_get_version_directory() {
   local backup_id="$1"
   local resolved_root
@@ -74,14 +79,15 @@ backup_verify_directory() {
   required_paths=(
     "data/chatwoot-postgres.dump"
     "data/chatwoot-storage.${archive_suffix}"
-    "data/ai-service-data.${archive_suffix}"
-    "data/ai-admin-data.${archive_suffix}"
     "config/platform.env"
     "config/ssl-record.env"
     "compose/chatwoot.compose.yaml"
     "compose/ai-service.compose.yaml"
     "nginx/site.conf"
   )
+  if backup_contains_ai "${backup_directory}"; then
+    required_paths+=("data/ai-service-data.${archive_suffix}" "data/ai-admin-data.${archive_suffix}")
+  fi
 
   for required_path in "${required_paths[@]}"; do
     if [[ ! -s "${backup_directory}/${required_path}" ]]; then
@@ -98,17 +104,15 @@ backup_verify_directory() {
     return 1
   fi
 
-  for required_path in \
-    "data/chatwoot-storage.${archive_suffix}" \
-    "data/ai-service-data.${archive_suffix}" \
-    "data/ai-admin-data.${archive_suffix}"; do
+  for required_path in "${required_paths[@]}"; do
+    [[ "${required_path}" == *.tar || "${required_path}" == *.tar.gz ]] || continue
     if ! tar -tf "${backup_directory}/${required_path}" >/dev/null; then
       log_error "Backup archive validation failed: ${required_path}"
       return 1
     fi
   done
 
-  backup_verify_permissions "${backup_directory}"
+  backup_verify_permissions "${backup_directory}" || return 1
   log_ok "[backup] Backup integrity verified: ${expected_id}."
 }
 

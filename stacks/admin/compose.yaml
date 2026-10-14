@@ -22,6 +22,13 @@ services:
       ADMIN_MAINTENANCE_TOKEN: "${ADMIN_MAINTENANCE_TOKEN:?ADMIN_MAINTENANCE_TOKEN is required}"
       ADMIN_MAINTENANCE_SOCKET: /run/platform-maintenance/worker.sock
     volumes:
+      # Host probe also works with older Admin images that lack /ready.
+      - type: bind
+        source: ../../modules/admin/readiness.py
+        target: /run/platform-health/readiness.py
+        read_only: true
+        bind:
+          create_host_path: false
       - type: bind
         source: "${ADMIN_MAINTENANCE_SOCKET_DIR:?ADMIN_MAINTENANCE_SOCKET_DIR is required}"
         target: /run/platform-maintenance
@@ -32,7 +39,7 @@ services:
     tmpfs:
       - /tmp
     healthcheck:
-      test: [CMD, python, -c, "import os,urllib.request; urllib.request.urlopen('http://localhost:'+os.environ['AI_ADMIN_CONTAINER_PORT']+'/health',timeout=5)"]
+      test: [CMD, python, /run/platform-health/readiness.py]
       interval: 30s
       timeout: 10s
       retries: 3

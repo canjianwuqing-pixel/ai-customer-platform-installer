@@ -2,4 +2,5 @@
 set -Eeuo pipefail
 
 # Network access is outside the scope of this deterministic fixture.
+if [[ "${CURL_FIXTURE_FAIL_READY:-false}" == true && "$*" == */ready* ]]; then exit 1; fi
 exit 0

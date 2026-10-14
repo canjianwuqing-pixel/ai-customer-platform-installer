@@ -39,6 +39,32 @@ Chatwoot、pgvector/PostgreSQL 和 Redis 镜像均通过 `.env` 使用明确版�
 
 AI Service 和统一后台不是 Chatwoot 基础安装必选项。未配置 AI 镜像且未启用统一后台时，安装器跳过全部 AI 步骤。启用统一后台参见下一节；高级用户仍可覆盖固定标签或 digest 的镜像。OpenAI API Key 不属于安装必填项，也不通过浏览器表单写入；仅由 Runtime 的受保护环境文件提供，后台只选择模型与凭据环境变量引用。
 
+## 统一配置生命周期与旧部署升级
+
+`install`、`upgrade`、`restore` 共用 `lib/lifecycle.sh` 的配置准备流程：重新建立默认配置 + 用户配置上下文，在 `0600` 候选文件中迁移、补齐允许生成的字段、校验，再原子保存。迁移失败不替换原 `.env`；重复执行保留已有密码、Secret 和后台数据。恢复使用备份配置重新建立完整上下文，不继承当前进程中的 Admin、Runtime 开关及旧用户扩展变量。
+
+新安装可以生成核心 Secret；已有部署缺少 `DATABASE_PASSWORD`、`REDIS_PASSWORD` 或 `SECRET_KEY_BASE` 时拒绝自动重置，应找回原配置。新增的管理 Token、Session Secret 和 `ADMIN_API_URL` 可以自动补齐；已有非空值必须通过校验，不会因格式错误而偷偷换值。保留旧 `AI_ADMIN_*` 配置供迁移失败后的恢复，统一后台容器不读取这些旧字段，不会因此增加第二套账号。
+
+旧 Chatwoot-only 部署启用统一后台：在本地 `.env` 设置 `ADMIN_ENABLED=true`，执行 `bash upgrade.sh` 并确认。无需填写 AI 镜像：缺少时选择固定的仓库 Runtime/Admin 本地构建标签；Chatwoot 升级目标留空时保留当前版本。升级按 Docker 项目标签识别当前部署，先备份旧栈，再构建/拉取目标镜像、应用配置、迁移并验证；新 Admin 的 Nginx 路由和维护执行器随升级部署。仍可通过 `UPGRADE_*` 明确选择固定版本，禁止 `latest`。
+
+已部署的本地 Runtime/Admin 标签不变时复用原镜像，避免覆盖回滚镜像。升级它们的代码需要提供新的固定目标标签；从外部 Runtime 切换本地构建也必须选择不同标签。备份现在按启用模块保存数据：Chatwoot-only 备份不要求 AI 容器；旧版包含 AI 的备份仍可恢复。升级专用备份会保持应用停止写入，直到迁移和重启，避免回滚丢失备份之后的新消息；请预留构建/拉取期间的维护窗口。迁移前的镜像准备失败只恢复旧容器，不回放数据库。恢复不会删除额外 AI 数据卷，恢复到未启用 AI 的版本时会停止旧 AI 服务。
+
+内部 Compose 调用统一加载默认配置、镜像配置和用户配置，生成仅所有者可读的临时有效环境快照，显式传入项目名、快照和所需覆盖文件；命令结束删除快照，sudo 和工作目录变化不改变值。日常运维统一使用根目录 `manage.sh`，不要进入 `stacks/` 裸执行 `docker compose`；Admin Compose 文件只是覆盖层，不是独立部署入口。不要把完整根 `.env` 配置为服务级 `env_file`。
+
+dotenv 使用非执行的单行字面量格式。建议对 `$`、`#`、前后空格等特殊内容使用单引号；旧凭据中的 `$` 和行内 `#` 保留字面含义，不作为变量展开或注释。双引号不支持变量展开或转义，不能安全往返的写回会被拒绝，不会输出字段值。修改既有维护执行器的路径时，须先完成任务并停止配置指定的 unit，再重新执行安装；不会中断正在运行的维护任务。
+
+Admin `/health` 检查本地存储，新增 `/ready` 验证 Service/Domain 列表、管理 Token 认证、拒绝未认证访问和维护连接。部署验证和 Compose 使用只读挂载的标准库兼容探针，旧 Admin 镜像即使没有 `/ready` 也能完成同等检查，不必覆盖旧镜像来获得新健康接口；依赖不兼容时不再报告就绪。Compose 2.24.4+ 的要求会在部署前检查。
+
+完整回归（测试依赖安装在已有虚拟环境中）：
+
+```bash
+ADMIN_TEST_PYTHON="$PWD/runtime/admin-venv/bin/python" \
+AI_RUNTIME_TEST_PYTHON="$PWD/runtime/admin-venv/bin/python" \
+TEST_JOBS=4 bash tests/run-all.sh
+```
+
+包含 Shell 语法检查、全部 fixture/Python 套件和真实 Compose 配置检查；Docker、systemd、Nginx、数据库写入均使用隔离替身，不代表真实服务器部署验证。报告保存在忽略 Git 的受保护 `runtime/tests/suite.*` 目录。
+
 ## 统一管理后台（第十四阶段）
 
 统一管理后台是平台唯一管理入口：`https://<DOMAIN>/admin`。只有一个管理员账号，不创建 Service Admin、Domain Admin 或其他账号体系。Chatwoot 自身的客服业务登录不作为平台管理入口。
@@ -64,7 +90,7 @@ profile API 采用与现有配置相同的 SQLite 覆盖方式，不重写 YAML�
 
 ### 后台系统维护
 
-`/admin/maintenance` 调用原 `backup.sh`、`restore.sh`、`upgrade.sh`、`rollback.sh`，不重写其数据处理逻辑。每次操作必须输入对应的 `BACKUP` / `RESTORE` / `UPGRADE` / `ROLLBACK`；恢复/回滚还必须选择有效版本 ID。升级目标仍由原 `.env` 中 `UPGRADE_*` 固定版本决定，镜像需已发布或可由原升级脚本拉取，不会通过后台自动发布本地构建镜像。
+`/admin/maintenance` 调用原 `backup.sh`、`restore.sh`、`upgrade.sh`、`rollback.sh`，不重写其数据处理逻辑。每次操作必须输入对应的 `BACKUP` / `RESTORE` / `UPGRADE` / `ROLLBACK`；恢复/回滚还必须选择有效版本 ID。升级目标由 `.env` 中固定的 `UPGRADE_*` 或当前版本决定；本地 Runtime/Admin 使用构建流程，外部镜像使用拉取流程，不自动发布镜像。
 
 维护由宿主机 systemd 执行器运行，通过权限为 `0600` 的 Unix socket + 独立随机 Token 接收四种固定命令，拒绝任意路径、参数和 Shell。Web 容器不挂载 Docker socket、宿主 `.env` 或备份目录。执行器有维护主机所需的 root 权限，应部署在可信、受保护的仓库目录；其 socket 访问权限等同于授权执行这四种高权限操作，不是通用沙箱。
 
@@ -257,7 +283,7 @@ bash install.sh
 ./rollback.sh UPGRADE_ID
 ```
 
-升级要求输入 `UPGRADE`，回滚要求输入 `ROLLBACK`。只有操作者明确指定 `--yes` 时才允许非交互执行。升级记录保存在 `UPGRADE_RECORD_DIR`，只记录版本、状态和关联备份 ID，不复制 API Key、密码或 Token。手动回滚会验证当前版本与记录中的升级目标一致，并通过升级前备份恢复数据库、持久化文件、`.env`、Compose 配置、Nginx 配置和服务状态。
+升级要求输入 `UPGRADE`，回滚要求输入 `ROLLBACK`。只有操作者明确指定 `--yes` 时才允许非交互执行。升级记录保存在 `UPGRADE_RECORD_DIR`，版本记录不包含凭据；同一受保护目录还保留 `0600` 的源/目标配置快照，含 Secret，禁止提交 Git 或公开分享。手动回滚会验证当前版本与记录中的升级目标一致，并通过升级前备份恢复数据库、持久化文件、`.env`、Compose 配置、Nginx 配置和服务状态。
 
 ## 后续扩展方向
 

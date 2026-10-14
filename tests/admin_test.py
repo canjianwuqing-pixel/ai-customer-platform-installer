@@ -12,6 +12,7 @@ import tempfile
 import threading
 import time
 import unittest
+import urllib.error
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
@@ -27,6 +28,7 @@ from ai_runtime.app import create_app as runtime_app
 from ai_runtime.config import ServiceResolver
 from ai_runtime.engine import RuntimeEngine
 from ai_runtime.management_store import ManagementStore, SCHEMA_VERSION
+from modules.admin import readiness
 
 
 class AdminFixtures(unittest.TestCase):
@@ -297,6 +299,67 @@ class AdminFixtures(unittest.TestCase):
         with self.assertRaises(AdminError):
             fresh.login("retired-name", "123456")
         self.assertEqual(self.login("123456").status_code, 303)
+
+    def test_readiness_checks_management_authentication_and_basic_interfaces(self):
+        response = self.client.get("/ready")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"status": "ready"})
+        original = self.management.token
+        self.management.token = "incorrect-fixture-token-not-real-123456789"
+        response = self.client.get("/ready")
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.json(), {"status": "not_ready"})
+        self.assertNotIn(original, response.text)
+
+    def test_readiness_rejects_unauthenticated_or_incompatible_management(self):
+        for response in (httpx.Response(200, json=[]), httpx.Response(200, json={"status": "ok"}), httpx.Response(404)):
+            client = InternalClient("http://runtime.test", self.env["SERVICE_MANAGEMENT_TOKEN"],
+                                    httpx.MockTransport(lambda _request: response))
+            app = create_app(self.env, client, self.maintenance)
+            with TestClient(app) as browser:
+                self.assertEqual(browser.get("/ready").status_code, 503)
+
+    def test_readiness_fails_when_maintenance_authentication_fails(self):
+        maintenance = InternalClient("http://worker.test", self.env["ADMIN_MAINTENANCE_TOKEN"],
+                                     httpx.MockTransport(lambda _request: httpx.Response(401)))
+        app = create_app(self.env, self.management, maintenance)
+        with TestClient(app) as browser:
+            self.assertEqual(browser.get("/ready").status_code, 503)
+
+    def test_portable_probe_supports_legacy_admin_without_ready_endpoint(self):
+        calls = []
+        def request(url, token=""):
+            calls.append((url, bool(token)))
+            if url.endswith("/health"):
+                return {"status": "ok"}
+            if token:
+                return []
+            raise urllib.error.HTTPError(url, 401, "unauthorized", {}, None)
+        env = {**self.env, "AI_ADMIN_CONTAINER_PORT": "8080", "ADMIN_API_URL": "http://runtime.test"}
+        with patch.object(readiness, "request_json", side_effect=request), patch.object(readiness, "maintenance_state", return_value={"jobs": []}):
+            readiness.check(env)
+        self.assertTrue(calls)
+        self.assertFalse(any(url.endswith("/ready") for url, _ in calls))
+
+    def test_portable_probe_rejects_incompatible_or_unauthenticated_api(self):
+        env = {**self.env, "AI_ADMIN_CONTAINER_PORT": "8080", "ADMIN_API_URL": "http://runtime.test"}
+        def request(url, token=""):
+            return {"status": "ok"} if url.endswith("/health") else []
+        with patch.object(readiness, "request_json", side_effect=request):
+            with self.assertRaises(ValueError):
+                readiness.check(env)
+
+    def test_portable_probe_rejects_invalid_maintenance_state(self):
+        env = {**self.env, "AI_ADMIN_CONTAINER_PORT": "8080", "ADMIN_API_URL": "http://runtime.test"}
+        def request(url, token=""):
+            if url.endswith("/health"):
+                return {"status": "ok"}
+            if token:
+                return []
+            raise urllib.error.HTTPError(url, 403, "forbidden", {}, None)
+        with patch.object(readiness, "request_json", side_effect=request), patch.object(readiness, "maintenance_state", return_value={}):
+            with self.assertRaises(ValueError):
+                readiness.check(env)
 
     def test_password_has_no_complexity_rule_and_persists_after_app_restart(self):
         self.login()

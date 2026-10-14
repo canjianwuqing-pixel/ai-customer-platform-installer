@@ -104,6 +104,26 @@ def create_app(env=None, management=None, maintenance=None):
             pass
         return {"status": "ok"}
 
+    @app.get("/ready")
+    async def ready():
+        # Never return dependency bodies, credentials or error details.
+        try:
+            with auth.db():
+                pass
+            services = await management.call("GET", "/management/services")
+            domains = await management.call("GET", "/management/domains")
+            models = await management.call("GET", "/management/profiles/ai")
+            if not all(isinstance(items, list) for items in (services, domains, models)):
+                raise AdminError("dependency_not_ready", 503)
+            if not await management.authentication_enforced("/management/services"):
+                raise AdminError("dependency_not_ready", 503)
+            state = await maintenance.call("GET", "/state")
+            if not isinstance(state, dict) or not isinstance(state.get("jobs"), list):
+                raise AdminError("dependency_not_ready", 503)
+        except Exception:
+            return JSONResponse({"status": "not_ready"}, status_code=503)
+        return {"status": "ready"}
+
     @app.get("/admin/login")
     def login_page(request: Request):
         token, csrf = auth.create_session(old=request.cookies.get(cookie, ""))

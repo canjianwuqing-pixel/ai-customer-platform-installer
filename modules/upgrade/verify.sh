@@ -18,14 +18,15 @@ upgrade_verify() {
     return 1
   fi
 
-  if ! chatwoot_compose config --quiet || ! ai_service_compose config --quiet; then
+  if ! chatwoot_compose config --quiet || { config_ai_enabled && ! ai_service_compose config --quiet; }; then
     log_error "Active Compose configuration failed validation after upgrade."
     return 1
   fi
 
-  chatwoot_verify
-  ai_service_verify
-  nginx_verify
+  chatwoot_verify || return 1
+  if config_ai_enabled; then ai_service_verify || return 1; fi
+  if [[ "${ADMIN_ENABLED:-false}" == true ]]; then admin_verify || return 1; fi
+  nginx_verify || return 1
   log_ok "[upgrade] Upgraded platform health checks passed."
 }
 

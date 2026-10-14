@@ -34,15 +34,18 @@ backup_verify_restore_compatibility() {
   local backup_directory="$1"
 
   if [[ "$(backup_manifest_value "${backup_directory}" CHATWOOT_COMPOSE_PROJECT)" != "${CHATWOOT_COMPOSE_PROJECT}" ]] ||
-    [[ "$(backup_manifest_value "${backup_directory}" AI_SERVICE_COMPOSE_PROJECT)" != "${AI_SERVICE_COMPOSE_PROJECT}" ]] ||
     [[ "$(backup_manifest_value "${backup_directory}" DATABASE_NAME)" != "${DATABASE_NAME}" ]] ||
     [[ "$(backup_manifest_value "${backup_directory}" DATABASE_USER)" != "${DATABASE_USER}" ]] ||
     [[ "$(backup_manifest_value "${backup_directory}" CHATWOOT_DATABASE_SERVICE)" != "${BACKUP_CHATWOOT_DATABASE_SERVICE}" ]] ||
-    [[ "$(backup_manifest_value "${backup_directory}" CHATWOOT_STORAGE_SERVICE)" != "${BACKUP_CHATWOOT_STORAGE_SERVICE}" ]] ||
-    [[ "$(backup_manifest_value "${backup_directory}" AI_DATA_SERVICE)" != "${BACKUP_AI_DATA_SERVICE}" ]] ||
-    [[ "$(backup_manifest_value "${backup_directory}" AI_ADMIN_SERVICE)" != "${BACKUP_AI_ADMIN_SERVICE}" ]]; then
+    [[ "$(backup_manifest_value "${backup_directory}" CHATWOOT_STORAGE_SERVICE)" != "${BACKUP_CHATWOOT_STORAGE_SERVICE}" ]]; then
     log_error "Backup project, database, or service metadata does not match the current deployment."
     return 1
+  fi
+  if backup_contains_ai "${backup_directory}" && {
+    [[ "$(backup_manifest_value "${backup_directory}" AI_SERVICE_COMPOSE_PROJECT)" != "${AI_SERVICE_COMPOSE_PROJECT}" ]] ||
+    [[ "$(backup_manifest_value "${backup_directory}" AI_DATA_SERVICE)" != "${BACKUP_AI_DATA_SERVICE}" ]] ||
+    [[ "$(backup_manifest_value "${backup_directory}" AI_ADMIN_SERVICE)" != "${BACKUP_AI_ADMIN_SERVICE}" ]]; }; then
+    log_error 'Backup AI project or service metadata does not match this deployment.'; return 1
   fi
 }
 
@@ -121,7 +124,7 @@ backup_rollback_project_files() {
     rm -f -- "${target_path}.restore.$$" || true
   done
 
-  config_load_file "${CONFIG_FILE}" || true
+  config_load_installer_configuration "${CONFIG_FILE}" || true
   log_warn "[restore] Restored the pre-restore project configuration files."
 }
 
@@ -179,6 +182,15 @@ backup_restore_project_files() {
     }
   done
 
+  # Validate and migrate a complete replacement before touching current files
+  # or persistent data. Failure must leave the active configuration intact.
+  if ! config_prepare restore "${2:-${backup_directory}/config/platform.env}" "${CONFIG_FILE}.restore.$$"; then
+    backup_rollback_project_files "${target_paths[@]}"
+    return 1
+  fi
+  # Preparation temporarily points CONFIG_FILE at the staged replacement.
+  CONFIG_FILE="${target_paths[0]}"
+
   for target_path in "${target_paths[@]}"; do
     mv -f -- "${target_path}.restore.$$" "${target_path}" || {
       backup_rollback_project_files "${target_paths[@]}"
@@ -186,13 +198,13 @@ backup_restore_project_files() {
     }
   done
 
-  config_load_file "${CONFIG_FILE}"
+  config_load_installer_configuration "${CONFIG_FILE}"
   backup_validate_config || {
     backup_rollback_project_files "${target_paths[@]}"
     return 1
   }
 
-  if ! chatwoot_compose config --quiet || ! ai_service_compose config --quiet; then
+  if ! chatwoot_compose config --quiet || { config_ai_enabled && ! ai_service_compose config --quiet; }; then
     log_error "Restored Compose configuration did not validate."
     backup_rollback_project_files "${target_paths[@]}"
     return 1
@@ -220,8 +232,11 @@ backup_start_restored_services() {
   read -r -a ai_services <<<"${BACKUP_AI_REQUIRED_SERVICES}"
 
   log_info "[restore] Starting restored platform services."
-  chatwoot_compose up -d "${chatwoot_services[@]}"
-  ai_service_compose up -d "${ai_services[@]}"
+  chatwoot_compose up -d "${chatwoot_services[@]}" || return 1
+  if config_ai_enabled; then
+    if [[ "${ADMIN_ENABLED:-false}" == true ]]; then admin_install_worker || return 1; fi
+    ai_service_compose up -d "${ai_services[@]}" || return 1
+  fi
 }
 
 backup_verify_restored_services() {
@@ -234,7 +249,8 @@ backup_verify_restored_services() {
   read -r -a chatwoot_services <<<"${BACKUP_CHATWOOT_REQUIRED_SERVICES}"
   read -r -a ai_services <<<"${BACKUP_AI_REQUIRED_SERVICES}"
   chatwoot_running="$(chatwoot_compose ps --status running --services)" || return 1
-  ai_running="$(ai_service_compose ps --status running --services)" || return 1
+  ai_running=""
+  if config_ai_enabled; then ai_running="$(ai_service_compose ps --status running --services)" || return 1; fi
 
   for service_name in "${chatwoot_services[@]}"; do
     if ! grep -Fqx -- "${service_name}" <<<"${chatwoot_running}"; then
@@ -243,18 +259,23 @@ backup_verify_restored_services() {
     fi
   done
 
+  if config_ai_enabled; then
   for service_name in "${ai_services[@]}"; do
     if ! grep -Fqx -- "${service_name}" <<<"${ai_running}"; then
       log_error "Restored AI service is not running: ${service_name}"
       return 1
     fi
   done
+  fi
 
-  backup_wait_for_restore_database
-  chatwoot_verify_http
-  ai_service_wait_for_http "FastAPI service" "${AI_SERVICE_HTTP_CHECK_URL}"
-  ai_service_wait_for_http "AI administration backend" "${AI_ADMIN_HTTP_CHECK_URL}"
-  nginx_verify
+  backup_wait_for_restore_database || return 1
+  chatwoot_verify_http || return 1
+  if config_ai_enabled; then
+    ai_service_wait_for_http "FastAPI service" "${AI_SERVICE_HTTP_CHECK_URL}" || return 1
+    ai_service_wait_for_http "AI administration backend" "${AI_ADMIN_HTTP_CHECK_URL}" || return 1
+    if [[ "${ADMIN_ENABLED:-false}" == true ]]; then admin_verify || return 1; fi
+  fi
+  nginx_verify || return 1
   log_ok "[restore] Restored platform health checks passed."
 }
 
@@ -265,37 +286,72 @@ backup_restore() {
   local archive_suffix
   local compressed
   local storage_container_id
-  local ai_data_container_id
-  local ai_admin_container_id
+  local ai_data_container_id="" ai_admin_container_id=""
 
   backup_initialize_config
   backup_directory="$(backup_get_version_directory "${backup_id}")" || return 1
-  backup_verify_directory "${backup_directory}" "${backup_id}"
-  backup_verify_restore_compatibility "${backup_directory}"
-  backup_confirm_restore "${backup_id}" "${confirmed}"
+  backup_verify_directory "${backup_directory}" "${backup_id}" || return 1
+  backup_verify_restore_compatibility "${backup_directory}" || return 1
+  local prepared active_config="${CONFIG_FILE}" current_ai_ids
+  current_ai_ids="$(docker_execute ps --filter "label=com.docker.compose.project=${AI_SERVICE_COMPOSE_PROJECT}" --format '{{.ID}}')" || return 1
+  prepared="$(mktemp "${CONFIG_FILE}.restore-check.XXXXXX")" || return 1
+  if ! (config_prepare restore "${backup_directory}/config/platform.env" "${prepared}"); then
+    rm -f -- "${prepared}"; return 1
+  fi
+  if ! backup_confirm_restore "${backup_id}" "${confirmed}"; then rm -f -- "${prepared}"; return 1; fi
+  config_load_installer_configuration "${prepared}" || { rm -f -- "${prepared}"; return 1; }
+  if { backup_contains_ai "${backup_directory}" && ! config_ai_enabled; } ||
+    { ! backup_contains_ai "${backup_directory}" && config_ai_enabled; }; then
+    rm -f -- "${prepared}"
+    log_error 'Backup feature metadata and configuration disagree.'; return 1
+  fi
+  chatwoot_compose config --quiet || { rm -f -- "${prepared}"; return 1; }
+  if config_ai_enabled; then ai_service_compose config --quiet || { rm -f -- "${prepared}"; return 1; }; fi
 
   archive_suffix="$(backup_manifest_value "${backup_directory}" ARCHIVE_SUFFIX)"
   compressed="$(backup_manifest_value "${backup_directory}" COMPRESSED)"
-  storage_container_id="$(backup_get_container_id chatwoot_compose "${BACKUP_CHATWOOT_STORAGE_SERVICE}")"
-  ai_data_container_id="$(backup_get_container_id ai_service_compose "${BACKUP_AI_DATA_SERVICE}")"
-  ai_admin_container_id="$(backup_get_container_id ai_service_compose "${BACKUP_AI_ADMIN_SERVICE}")"
+  storage_container_id="$(backup_get_container_id chatwoot_compose "${BACKUP_CHATWOOT_STORAGE_SERVICE}")" || return 1
 
   log_warn "[restore] Beginning destructive restore of backup ${backup_id}."
-  backup_suspend_application_services
-  backup_restore_chatwoot_database "${backup_directory}/data/chatwoot-postgres.dump"
+  local -a residual_ai=()
+  if ! config_ai_enabled && [[ -n "${current_ai_ids}" ]]; then
+    mapfile -t residual_ai <<<"${current_ai_ids}"
+    docker_execute stop "${residual_ai[@]}" || return 1
+  fi
+  backup_suspend_application_services || return 1
+  CONFIG_FILE="${active_config}"
+  if ! backup_restore_project_files "${backup_directory}" "${prepared}"; then
+    config_load_installer_configuration "${prepared}" || true
+    backup_resume_application_services || true
+    if ((${#residual_ai[@]})); then docker_execute start "${residual_ai[@]}" || true; fi
+    CONFIG_FILE="${active_config}"
+    rm -f -- "${prepared}"
+    return 1
+  fi
+  rm -f -- "${prepared}"
+  if backup_contains_ai "${backup_directory}"; then
+    # Named volumes survive stopped/recreated containers. Create missing
+    # containers without starting applications before replaying their data.
+    if [[ "${ADMIN_ENABLED:-false}" == true ]]; then admin_install_worker || return 1; fi
+    ai_service_compose create ai-service ai-admin || return 1
+    ai_data_container_id="$(backup_get_container_id ai_service_compose "${BACKUP_AI_DATA_SERVICE}")" || return 1
+    ai_admin_container_id="$(backup_get_container_id ai_service_compose "${BACKUP_AI_ADMIN_SERVICE}")" || return 1
+  fi
+  backup_restore_chatwoot_database "${backup_directory}/data/chatwoot-postgres.dump" || return 1
   backup_restore_container_path \
     "${storage_container_id}" "${BACKUP_CHATWOOT_STORAGE_PATH}" \
-    "${backup_directory}/data/chatwoot-storage.${archive_suffix}" "${compressed}"
+    "${backup_directory}/data/chatwoot-storage.${archive_suffix}" "${compressed}" || return 1
+  if backup_contains_ai "${backup_directory}"; then
   backup_restore_container_path \
     "${ai_data_container_id}" "${AI_SERVICE_DATA_PATH}" \
-    "${backup_directory}/data/ai-service-data.${archive_suffix}" "${compressed}"
+    "${backup_directory}/data/ai-service-data.${archive_suffix}" "${compressed}" || return 1
   backup_restore_container_path \
     "${ai_admin_container_id}" "${AI_ADMIN_DATA_PATH}" \
-    "${backup_directory}/data/ai-admin-data.${archive_suffix}" "${compressed}"
-  backup_restore_project_files "${backup_directory}"
-  backup_restore_nginx_configuration "${backup_directory}"
-  backup_start_restored_services
-  backup_verify_restored_services
+    "${backup_directory}/data/ai-admin-data.${archive_suffix}" "${compressed}" || return 1
+  fi
+  backup_restore_nginx_configuration "${backup_directory}" || return 1
+  backup_start_restored_services || return 1
+  backup_verify_restored_services || return 1
 
   log_ok "[restore] Backup ${backup_id} was restored successfully."
 }

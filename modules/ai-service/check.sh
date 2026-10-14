@@ -17,9 +17,7 @@ ai_service_compose() {
     runtime_arguments+=(--file "${INSTALLER_ROOT}/stacks/admin/compose.yaml")
   fi
 
-  docker_execute compose \
-    --project-name "${AI_SERVICE_COMPOSE_PROJECT}" \
-    --env-file "${CONFIG_FILE}" \
+  config_compose "${AI_SERVICE_COMPOSE_PROJECT}" \
     --file "${AI_SERVICE_COMPOSE_FILE}" \
     "${runtime_arguments[@]}" \
     "$@"

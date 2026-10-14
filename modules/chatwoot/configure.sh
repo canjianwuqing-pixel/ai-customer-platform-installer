@@ -8,9 +8,7 @@ chatwoot_initialize_config() {
 }
 
 chatwoot_compose() {
-  docker_execute compose \
-    --project-name "${CHATWOOT_COMPOSE_PROJECT}" \
-    --env-file "${CONFIG_FILE}" \
+  config_compose "${CHATWOOT_COMPOSE_PROJECT}" \
     --file "${CHATWOOT_COMPOSE_FILE}" \
     "$@"
 }

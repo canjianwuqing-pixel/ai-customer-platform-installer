@@ -17,6 +17,15 @@ class InternalClient:
             raise AdminError("internal_api_not_configured", 503)
         self.base_url, self.token, self.transport = base_url.rstrip("/"), token, transport
 
+    async def authentication_enforced(self, path):
+        try:
+            async with httpx.AsyncClient(base_url=self.base_url, transport=self.transport,
+                                         trust_env=False, timeout=5, follow_redirects=False) as client:
+                response = await client.get(path)
+            return response.status_code in {401, 403}
+        except httpx.HTTPError:
+            return False
+
     async def call(self, method, path, body=None):
         try:
             async with httpx.AsyncClient(base_url=self.base_url, transport=self.transport,

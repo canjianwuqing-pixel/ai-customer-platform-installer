@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-admin_install() {
+admin_install_worker() {
   [[ "${ADMIN_ENABLED:-false}" == true ]] || return 0
-  admin_check
-  admin_configure
+  admin_check || return 1
+  admin_configure || return 1
   local candidate unit_file="/etc/systemd/system/${ADMIN_MAINTENANCE_UNIT}"
   if run_as_root test -e "${unit_file}" || run_as_root test -L "${unit_file}"; then
     if run_as_root test -L "${unit_file}" ||
@@ -17,17 +17,29 @@ admin_install() {
     "${INSTALLER_ROOT}/templates/admin/maintenance.service.template" >"${candidate}"; then
     rm -f -- "${candidate}"; return 1
   fi
+  if run_as_root test -f "${unit_file}" &&
+    run_as_root systemctl is-active --quiet "${ADMIN_MAINTENANCE_UNIT}" &&
+    ! run_as_root cmp -s -- "${candidate}" "${unit_file}"; then
+    rm -f -- "${candidate}"
+    log_error '[admin] Active maintenance unit paths changed. Finish maintenance jobs and stop the configured unit before re-running; no active worker was interrupted.'
+    return 1
+  fi
   # The executor is privileged but accepts only fixed maintenance operations.
   if ! run_as_root install -d -m 0700 "${ADMIN_MAINTENANCE_STATE_DIR}" "${ADMIN_MAINTENANCE_SOCKET_DIR}" ||
     ! run_as_root install -m 0644 "${candidate}" "${unit_file}"; then
     rm -f -- "${candidate}"; return 1
   fi
   rm -f -- "${candidate}"
-  run_as_root systemctl daemon-reload
+  run_as_root systemctl daemon-reload || return 1
   # Do not restart a worker that may be executing a backup or upgrade.
-  run_as_root systemctl enable --now "${ADMIN_MAINTENANCE_UNIT}"
-  ai_service_compose config --quiet
-  ai_service_compose build ai-admin
-  ai_service_compose up -d ai-admin
+  run_as_root systemctl enable --now "${ADMIN_MAINTENANCE_UNIT}" || return 1
+}
+
+admin_install() {
+  [[ "${ADMIN_ENABLED:-false}" == true ]] || return 0
+  admin_install_worker || return 1
+  ai_service_compose config --quiet || return 1
+  ai_service_compose build ai-admin || return 1
+  ai_service_compose up -d ai-admin || return 1
   log_ok "[admin] The single Admin service and restricted maintenance executor were deployed."
 }

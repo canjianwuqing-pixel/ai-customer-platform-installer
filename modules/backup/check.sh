@@ -42,10 +42,9 @@ backup_validate_config() {
     CHATWOOT_VERSION \
     POSTGRES_VERSION \
     REDIS_VERSION \
-    AI_SERVICE_IMAGE \
-    AI_ADMIN_IMAGE \
     AI_SERVICE_DATA_PATH \
     AI_ADMIN_DATA_PATH
+  if config_ai_enabled; then validation_require_keys AI_SERVICE_IMAGE AI_ADMIN_IMAGE; fi
 
   if ! validation_is_safe_absolute_path "${BACKUP_DIR}"; then
     log_error "BACKUP_DIR must be a safe absolute path other than the filesystem root."

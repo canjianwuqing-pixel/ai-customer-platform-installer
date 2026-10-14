@@ -89,27 +89,9 @@ setup_collect_configuration() {
 }
 
 setup_prepare_configuration() {
-  local template_file
-
-  CONFIG_FILE="${CONFIG_FILE:-${INSTALLER_ROOT}/.env}"
-  template_file="$(setup_template_file)"
-
-  if [[ ! -e "${CONFIG_FILE}" && ! -L "${CONFIG_FILE}" ]]; then
-    config_create_from_template "${CONFIG_FILE}" "${template_file}"
-  fi
-
-  config_load_installer_configuration "${CONFIG_FILE}"
-  if [[ "${CONFIG_LOADED}" != "true" ]]; then
-    log_error "The installation configuration could not be loaded."
-    return 1
-  fi
-
-  config_materialize_missing_defaults \
-    "${CONFIG_FILE}" \
-    "$(config_images_file)" \
-    "$(config_default_file)"
-
-  setup_collect_configuration
+  # Backwards-compatible public helper; there is only one preparation path.
+  declare -F config_prepare >/dev/null || source "${INSTALLER_ROOT}/lib/lifecycle.sh"
+  config_prepare install "${CONFIG_FILE:-${INSTALLER_ROOT}/.env}"
 }
 
 setup_configure_optional_modules() {

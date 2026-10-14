@@ -11,6 +11,7 @@ if [[ -n "${DOCKER_FIXTURE_FAIL_MATCH:-}" ]] &&
     "${DOCKER_FIXTURE_FAIL_MATCH}" >&2
   exit 1
 fi
+if [[ "${CURL_FIXTURE_FAIL_READY:-false}" == true && "$*" == *'exec -T ai-admin python -c'* ]]; then exit 1; fi
 
 case "${1:-}" in
   --version)
@@ -21,7 +22,7 @@ case "${1:-}" in
     compose_arguments="$*"
 
     if [[ "${1:-}" == "version" ]]; then
-      printf '%s\n' 'Docker Compose version v5.0.0-fixture'
+      if [[ "${2:-}" == --short ]]; then printf '%s\n' "${DOCKER_FIXTURE_COMPOSE_VERSION:-5.0.0}"; else printf '%s\n' 'Docker Compose version v5.0.0-fixture'; fi
       exit 0
     fi
 
@@ -61,7 +62,7 @@ case "${1:-}" in
       logs)
         printf 'fixture logs for %s\n' "${compose_arguments}"
         ;;
-      config | pull | build | up | run | start | stop | restart)
+      config | pull | build | up | run | start | stop | restart | create)
         ;;
       *)
         printf 'Unexpected fixture Docker Compose command: %s\n' "${1:-missing}" >&2
@@ -78,6 +79,37 @@ case "${1:-}" in
     ;;
   info | version)
     printf '%s\n' 'Docker daemon fixture'
+    ;;
+  volume)
+    [[ "${DOCKER_FIXTURE_CHATWOOT_DEPLOYED:-false}" != true ]] || printf '%s\n' 'fixture-existing-postgres-volume'
+    ;;
+  stop | start)
+    ;;
+  ps)
+    if [[ "$*" == *service=rails* ]]; then printf '%s\n' fixture-rails
+    elif [[ "$*" == *service=postgres* ]]; then printf '%s\n' fixture-postgres
+    elif [[ "$*" == *service=redis* ]]; then printf '%s\n' fixture-redis
+    elif [[ -n "${AI_SERVICE_IMAGE:-}" && "${DOCKER_FIXTURE_AI_DEPLOYED:-true}" == true ]]; then
+      if [[ "$*" == *service=ai-admin* ]]; then printf '%s\n' fixture-ai-admin; else printf '%s\n' fixture-ai-service; fi
+    fi
+    ;;
+  inspect)
+    if [[ "$*" == *config_files* ]]; then
+      printf '%s' 'compose.yaml'
+      [[ "${ADMIN_ENABLED:-false}" != true ]] || printf '%s' ',stacks/admin/compose.yaml'
+      [[ "${AI_RUNTIME_BUILD:-false}" != true ]] || printf '%s' ',compose.runtime.yaml'
+      printf '\n'
+    elif [[ "$*" == *'.Config.Env'* ]]; then
+      printf 'POSTGRES_PASSWORD=%s\nREDIS_PASSWORD=%s\nSECRET_KEY_BASE=%s\n' "${DOCKER_FIXTURE_DATABASE_PASSWORD:-${DATABASE_PASSWORD:-}}" "${REDIS_PASSWORD:-}" "${SECRET_KEY_BASE:-}"
+    elif [[ "$*" == *'.Config.Image'* ]]; then
+      case "${!#}" in
+        fixture-rails) printf 'chatwoot/chatwoot:%s\n' "${CHATWOOT_VERSION}" ;;
+        fixture-postgres) printf 'pgvector/pgvector:%s\n' "${POSTGRES_VERSION}" ;;
+        fixture-redis) printf 'redis:%s\n' "${REDIS_VERSION}" ;;
+        fixture-ai-admin) printf '%s\n' "${AI_ADMIN_IMAGE}" ;;
+        *) printf '%s\n' "${AI_SERVICE_IMAGE}" ;;
+      esac
+    fi
     ;;
   *)
     printf 'Unexpected fixture Docker command: %s\n' "${1:-missing}" >&2
