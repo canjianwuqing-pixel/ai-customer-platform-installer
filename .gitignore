@@ -11,6 +11,7 @@
 runtime/
 backups/
 backup-data/
+upgrade-records/
 
 # Editor and operating-system files
 .idea/

@@ -35,6 +35,10 @@ readonly -a MODULE_FILES=(
   "modules/backup/backup.sh"
   "modules/backup/restore.sh"
   "modules/backup/verify.sh"
+  "modules/upgrade/check.sh"
+  "modules/upgrade/verify.sh"
+  "modules/upgrade/upgrade.sh"
+  "modules/upgrade/rollback.sh"
 )
 
 for module_file in "${MODULE_FILES[@]}"; do
@@ -136,6 +140,54 @@ run_restore_command() {
   backup_restore "${backup_id}" "${confirmed}"
 }
 
+run_upgrade_command() {
+  local confirmed="false"
+
+  while (($# > 0)); do
+    case "$1" in
+      --yes) confirmed="true" ;;
+      *) die "Unknown upgrade option: $1" ;;
+    esac
+    shift
+  done
+
+  validation_validate_base_config
+  upgrade_execute "${confirmed}"
+}
+
+run_rollback_command() {
+  local record_id=""
+  local confirmed="false"
+
+  if [[ "${1:-}" == "--list" ]]; then
+    upgrade_list_records
+    return 0
+  fi
+
+  while (($# > 0)); do
+    case "$1" in
+      --yes) confirmed="true" ;;
+      --*) die "Unknown rollback option: $1" ;;
+      *)
+        if [[ -n "${record_id}" ]]; then
+          die "Rollback accepts at most one upgrade record ID."
+        fi
+        record_id="$1"
+        ;;
+    esac
+    shift
+  done
+
+  validation_validate_base_config
+  upgrade_initialize_config
+  if [[ -z "${record_id}" ]]; then
+    record_id="$(upgrade_find_latest_completed_record)" ||
+      die "No completed upgrade record is available for rollback."
+    log_info "[rollback] Selected latest completed upgrade record: ${record_id}."
+  fi
+  upgrade_rollback "${record_id}" "${confirmed}"
+}
+
 main() {
   local command_name="${1:-install}"
 
@@ -152,11 +204,14 @@ main() {
     install) run_install_command "$@" ;;
     backup) run_backup_command "$@" ;;
     restore) run_restore_command "$@" ;;
+    upgrade) run_upgrade_command "$@" ;;
+    rollback) run_rollback_command "$@" ;;
     list-backups)
       backup_initialize_config
       backup_list_versions
       ;;
-    *) die "Unknown command '${command_name}'. Expected install, backup, restore, or list-backups." ;;
+    list-upgrades) upgrade_list_records ;;
+    *) die "Unknown command '${command_name}'. Expected install, backup, restore, upgrade, rollback, list-backups, or list-upgrades." ;;
   esac
 
   log_ok "Installer workflow completed."

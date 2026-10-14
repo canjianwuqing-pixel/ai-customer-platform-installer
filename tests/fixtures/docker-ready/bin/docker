@@ -5,6 +5,13 @@ if [[ -n "${DOCKER_FIXTURE_LOG:-}" ]]; then
   printf '%s\n' "$*" >>"${DOCKER_FIXTURE_LOG}"
 fi
 
+if [[ -n "${DOCKER_FIXTURE_FAIL_MATCH:-}" ]] &&
+  [[ "$*" == *"${DOCKER_FIXTURE_FAIL_MATCH}"* ]]; then
+  printf 'Fixture Docker failure for command containing: %s\n' \
+    "${DOCKER_FIXTURE_FAIL_MATCH}" >&2
+  exit 1
+fi
+
 case "${1:-}" in
   --version)
     printf '%s\n' 'Docker version 29.0.0, build fixture'

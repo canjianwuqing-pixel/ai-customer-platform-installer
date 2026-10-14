@@ -14,6 +14,7 @@
 - AI 服务独立数据卷、环回地址默认绑定和敏感日志禁用约束；
 - Chatwoot Webhook、Secret 与 Inbox 集成参数预留；
 - 带版本、校验和、保留策略及显式恢复确认的本地备份与恢复；
+- 带升级前备份、版本记录、健康检查和失败自动恢复的安全升级与回滚；
 - Chatwoot 的 Nginx HTTP 反向代理与 WebSocket 支持；
 - 单域名 DNS 检测、Let's Encrypt 证书申请和 HTTPS 切换；
 - Certbot 自动续签、Nginx deploy hook 和续签 dry-run；
@@ -40,6 +41,8 @@ Chatwoot、pgvector/PostgreSQL 和 Redis 镜像均通过 `.env` 使用明确版�
 AI Service 和 AI 管理后台同样只接受带固定标签或 SHA-256 digest 的镜像引用。仓库不内置某个供应商镜像；部署镜像需要遵守 Compose 中声明的环境变量契约，并分别提供由 `AI_SERVICE_HTTP_CHECK_URL` 和 `AI_ADMIN_HTTP_CHECK_URL` 指向的 HTTP 健康端点。`OPENAI_API_KEY`、内部 Token、管理密码和会话 Secret 只保存在本地 `.env`，安装器不会输出其值。`AI_LOG_SENSITIVE_DATA` 必须保持为 `false`。
 
 备份版本保存在 `BACKUP_DIR`，目录和文件分别限制为仅所有者可访问。每个版本包含 Chatwoot PostgreSQL dump、Chatwoot storage、AI Service 与管理后台持久化数据、受保护的 `.env`、两套 Compose 文件、Nginx 站点配置、SSL 配置记录、版本 manifest 和 SHA-256 校验清单。证书私钥不会复制进备份；`.env` 含真实 Secret，因此备份目录仍应放在受控磁盘中。当前仅支持本地备份，不上传云存储，也不创建定时任务。
+
+升级目标由 `UPGRADE_CHATWOOT_VERSION`、`UPGRADE_AI_SERVICE_IMAGE` 和 `UPGRADE_AI_ADMIN_IMAGE` 明确指定。移动标签 `latest` 会被拒绝。升级器先验证当前安装和目标 Compose 模型，再创建完整备份和升级记录；随后拉取目标镜像、原子更新 `.env`、停止应用服务、执行 Chatwoot 数据库迁移、重建服务并运行健康检查。数据库迁移、服务重建或健康检查失败时，会自动恢复刚创建的升级前备份。PostgreSQL 和 Redis 镜像不会被升级模块隐式跨版本升级。
 
 ## 安装流程规划
 
@@ -82,6 +85,17 @@ bash install.sh
 
 恢复会要求输入 `RESTORE`，自动化环境必须显式传入 `--yes`。恢复开始前会校验 manifest、全部 SHA-256 和归档格式，然后停止配置指定的应用服务；成功恢复数据库、持久化数据与配置后才重新启动服务并执行 HTTP、PostgreSQL 和 Nginx 健康检查。
 
+配置明确的目标版本后，可以执行安全升级、查看升级记录或回滚最近一次成功升级：
+
+```bash
+./upgrade.sh
+./rollback.sh --list
+./rollback.sh
+./rollback.sh UPGRADE_ID
+```
+
+升级要求输入 `UPGRADE`，回滚要求输入 `ROLLBACK`。只有操作者明确指定 `--yes` 时才允许非交互执行。升级记录保存在 `UPGRADE_RECORD_DIR`，只记录版本、状态和关联备份 ID，不复制 API Key、密码或 Token。手动回滚会验证当前版本与记录中的升级目标一致，并通过升级前备份恢复数据库、持久化文件、`.env`、Compose 配置、Nginx 配置和服务状态。
+
 ## 后续扩展方向
 
 - Chatwoot 单实例生产部署；
@@ -90,6 +104,6 @@ bash install.sh
 - 多域名入口；
 - Cloudflare DNS API、DNS-01 自动验证与泛域名证书；
 - 云备份、异地复制和自动调度；
-- 安装验证、升级和运维工具。
+- 更细粒度的组件升级路径和运维工具。
 
 多 AI、多客服实例、多平台、多租户、多域名和上述扩展能力不属于当前阶段。

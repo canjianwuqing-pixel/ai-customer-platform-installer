@@ -3,6 +3,7 @@ set -Eeuo pipefail
 
 declare -a BACKUP_CHATWOOT_RESTART_SERVICES=()
 declare -a BACKUP_AI_RESTART_SERVICES=()
+BACKUP_LAST_CREATED_ID=""
 
 backup_prepare_root_directory() {
   local current_gid
@@ -428,6 +429,7 @@ backup_create() {
     log_error "Failed to finalize the verified backup version."
     return 1
   fi
+  BACKUP_LAST_CREATED_ID="${backup_id}"
   backup_apply_retention || return 1
   log_ok "[backup] Backup completed: ${backup_id}."
 
