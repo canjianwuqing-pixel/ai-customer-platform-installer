@@ -83,14 +83,14 @@ on_error() {
 main() {
   trap 'on_error "${LINENO}" "$?"' ERR
 
-  log_info "AI customer platform installer skeleton started."
+  log_info "AI customer platform installer started."
   config_load_optional "${CONFIG_FILE:-${INSTALLER_ROOT}/.env}"
   validation_validate_base_config
 
   register_core_steps
   run_registered_steps
 
-  log_info "Project skeleton completed. No software was installed."
+  log_ok "Installer workflow completed."
 }
 
 main "$@"

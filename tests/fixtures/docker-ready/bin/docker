@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+case "${1:-}" in
+  --version)
+    printf '%s\n' 'Docker version 29.0.0, build fixture'
+    ;;
+  compose)
+    if [[ "${2:-}" == "version" ]]; then
+      printf '%s\n' 'Docker Compose version v5.0.0-fixture'
+    fi
+    ;;
+  info | version)
+    printf '%s\n' 'Docker daemon fixture'
+    ;;
+esac

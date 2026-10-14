@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+if [[ "${1:-}" == "is-active" ]]; then
+  exit 0
+fi
+
+exit 0

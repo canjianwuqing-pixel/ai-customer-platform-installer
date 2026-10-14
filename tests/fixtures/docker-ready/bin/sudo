@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+# The ready-environment fixture never performs privileged mutations. Returning
+# success lets permission probes model a sudo-capable Ubuntu user.
+exit 0

@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+printf '%s\n' 'Fixture failure: apt-get must not run when Docker is healthy.' >&2
+exit 97

@@ -43,6 +43,51 @@ file_is_readable() {
   [[ -f "$1" && -r "$1" ]]
 }
 
+current_user_is_root() {
+  [[ "${EUID:-$(id -u)}" == "0" ]]
+}
+
+run_as_root() {
+  if current_user_is_root; then
+    "$@"
+    return $?
+  fi
+
+  if ! command_exists sudo; then
+    log_error "Root privileges are required, but sudo is unavailable."
+    return 1
+  fi
+
+  sudo "$@"
+}
+
+read_key_value_file() {
+  local file_path="$1"
+  local requested_key="$2"
+  local key
+  local value
+
+  if ! file_is_readable "${file_path}"; then
+    return 1
+  fi
+
+  while IFS='=' read -r key value; do
+    if [[ "${key}" != "${requested_key}" ]]; then
+      continue
+    fi
+
+    value="${value%$'\r'}"
+    value="${value#\"}"
+    value="${value%\"}"
+    value="${value#\'}"
+    value="${value%\'}"
+    printf '%s\n' "${value}"
+    return 0
+  done <"${file_path}"
+
+  return 1
+}
+
 run_step() {
   local step_name="$1"
   local function_name="$2"

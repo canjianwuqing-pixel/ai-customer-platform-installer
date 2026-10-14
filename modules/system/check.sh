@@ -11,24 +11,7 @@ readonly SYSTEM_NETWORK_TIMEOUT_SECONDS="${SYSTEM_NETWORK_TIMEOUT_SECONDS:-10}"
 
 system_read_os_release_value() {
   local requested_key="$1"
-  local key
-  local value
-
-  while IFS='=' read -r key value; do
-    if [[ "${key}" != "${requested_key}" ]]; then
-      continue
-    fi
-
-    value="${value%$'\r'}"
-    value="${value#\"}"
-    value="${value%\"}"
-    value="${value#\'}"
-    value="${value%\'}"
-    printf '%s\n' "${value}"
-    return 0
-  done <"${SYSTEM_OS_RELEASE_FILE}"
-
-  return 1
+  read_key_value_file "${SYSTEM_OS_RELEASE_FILE}" "${requested_key}"
 }
 
 system_check_operating_system() {

@@ -11,7 +11,7 @@
 - System、Docker、Chatwoot、Nginx、SSL 模块占位文件；
 - Chatwoot Stack、配置模板、测试和文档目录。
 
-系统检测模块已经提供只读的 Ubuntu 版本、权限、CPU、内存、磁盘、架构和网络检查。其余安装与配置模块仍然是安全的 no-op 占位实现，不会安装 Docker、Chatwoot、Nginx，不会申请 SSL 证书，也不会修改服务器配置。
+系统检测模块已经提供只读的 Ubuntu 版本、权限、CPU、内存、磁盘、架构和网络检查。Docker 模块可以检测现有环境，并在缺失时通过 Docker 官方 APT 仓库安装 Engine、CLI、containerd、Buildx 和 Compose Plugin。Chatwoot、Nginx 和 SSL 模块仍然是安全的 no-op 占位实现。
 
 ## 配置原则
 
@@ -45,7 +45,7 @@ cp .env.example .env
 bash install.sh
 ```
 
-该命令当前不会执行任何实际安装操作。
+该命令会执行只读系统检测，并在 Docker 环境缺失时进入 Docker 官方安装流程。Chatwoot、Nginx 和 SSL 步骤目前仍只输出占位日志。
 系统检测只支持 Ubuntu 22.04 和 24.04；在其他操作系统上运行会输出检测错误并安全退出。
 
 ## 后续扩展方向

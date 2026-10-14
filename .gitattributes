@@ -3,3 +3,4 @@
 *.yml text eol=lf
 .env.example text eol=lf
 tests/fixtures/os-release.* text eol=lf
+tests/fixtures/docker-ready/bin/* text eol=lf

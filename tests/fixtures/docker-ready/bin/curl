@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+# Network access is outside the scope of this deterministic fixture.
+exit 0
