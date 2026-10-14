@@ -11,6 +11,7 @@
 - System 环境检测与 Docker 官方安装流程；
 - Chatwoot、PostgreSQL、Redis、Sidekiq 的 Docker Compose Stack；
 - 可选的 FastAPI AI Service 与 AI 管理后台 Docker Compose Stack；
+- 基于 Service Instance 的 AI Runtime 请求路由与实例上下文隔离；
 - AI 服务独立数据卷、环回地址默认绑定和敏感日志禁用约束；
 - Chatwoot Webhook、Secret 与 Inbox 集成参数预留；
 - 带版本、校验和、保留策略及显式恢复确认的本地备份与恢复；
@@ -46,9 +47,54 @@ Service Management Core 是未来统一 AI 客服管理后台的数据基础。�
 
 实际配置分别写入 `config/services/local.yaml` 和 `config/domains/local.yaml`。两个文件均已被 Git 忽略，且必须使用 `0600` 或更严格的权限。加载顺序为默认配置后加载用户配置：相同客服实例 ID 或域名的用户字段覆盖默认字段，也可以追加新记录。域名加载时会验证 `service_id` 引用存在，启用的域名只能绑定启用的客服实例，并且最多只能有一个启用的默认入口。
 
-`lib/services.sh` 提供客服实例加载、校验、ID 列表和按 ID 查询接口；`lib/domains.sh` 提供域名绑定加载、关系校验和按域名解析客服实例接口。配置结构不包含 API Key、密码或 Token 字段，也不会输出配置内容。当前安装流程仅加载和验证数据，不创建域名、服务或运行时资源，不实现管理后台 UI、DNS、SSL、Cloudflare 或外部平台接入。
+`lib/services.sh` 提供客服实例加载、校验、ID 列表和按 ID 查询接口；`lib/domains.sh` 提供域名绑定加载、关系校验和按域名解析客服实例接口。配置结构不包含 API Key、密码或 Token 字段，也不会输出配置内容。安装流程加载并验证这些数据，AI Runtime 再按请求解析实例；域名配置目前仍只校验绑定关系。
 
 这一核心层为未来统一后台管理多 AI、多域名、多入口、多平台以及多知识库关系保留了稳定边界。
+
+## AI Runtime 多实例运行
+
+Service Instance 已接入 `ai_runtime/` 中的 FastAPI Runtime。`POST /chat` 接收 `message` 和可选的 `service_id`，按实例加载模型、系统提示词、回复规则与知识库上下文，再调用配置指定的兼容 Chat Completions API。请求必须使用 `Authorization: Bearer <AI_SERVICE_INTERNAL_TOKEN>`；返回值仅包含 `service_id` 和 `reply`。API 适配约定参考 [OpenAI 官方文档](https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create)。
+
+`config/services/services.yaml` 和本地 `local.yaml` 的格式保持不变。实例的 `ai_config`、`prompt_config`、`knowledge_config` 仍是配置引用，分别解析到同目录下 `ai/<引用>.yaml`、`prompts/<引用>.yaml`、`knowledge/<引用>.yaml`。每个目录均提供 `*.example.yaml`；实际配置文件已被 Git 忽略。`channel_config` 继续保留为未来入口连接引用。
+
+例如，本地 `config/services/local.yaml` 可以配置两个独立实例：
+
+```yaml
+version: 1
+services:
+  - id: service_a
+    name: Service A
+    enabled: true
+    ai_config: ai-a
+    prompt_config: prompt-a
+    knowledge_config: knowledge-a
+    channel_config: ""
+  - id: service_b
+    name: Service B
+    enabled: true
+    ai_config: ai-b
+    prompt_config: prompt-b
+    knowledge_config: knowledge-b
+    channel_config: ""
+```
+
+`ai/ai-a.yaml` 配置 `model`、`api_base_url` 和 `api_key_env`；后者只保存凭据的环境变量名。`prompts/prompt-a.yaml` 配置 `system_prompt` 和 `reply_rules` 字符串列表。`knowledge/knowledge-a.yaml` 配置 `source` 和 `max_characters`，`source` 是相对 `AI_SERVICE_DATA_PATH/services/service_a/` 的 UTF-8 文本文件路径。B 实例使用自己的引用和数据目录。空的提示词/知识库引用表示不附加该上下文；引用非空时文件必须存在。当前知识库实现为受大小限制的本地文本上下文，不包含向量检索。
+
+省略 `service_id` 时，优先使用环境变量 `AI_DEFAULT_SERVICE_ID`；未指定且只有一个启用实例时使用该实例。多个实例启用时必须明确设置默认实例。只有实例集合完全为空时，才使用已有的 `AI_MODEL`、`OPENAI_API_KEY` 环境变量，以及可选的 `AI_SYSTEM_PROMPT` 和 `AI_API_BASE_URL`，保留单实例环境变量模式。显式无效、未知、禁用实例或缺失配置会返回明确错误，不会借用其他实例配置。
+
+Runtime 每次请求独立加载默认配置和用户覆盖配置，不保存共享对话上下文；知识文件限制在对应实例的数据目录内。API Key 仅从环境变量读取，配置/请求校验错误及上游错误均返回错误码，不输出完整配置、消息内容或上游响应。多实例隔离是运行配置与上下文隔离；未来的多租户权限管理仍需单独实现。
+
+使用仓库内 Runtime 时，在本地 `.env` 设置 `AI_RUNTIME_BUILD=true`、固定版本的 `AI_SERVICE_IMAGE`（作为本地构建标签）和现有 `AI_ADMIN_IMAGE`。安装器会加载 `stacks/ai-service/compose.runtime.yaml`，构建 Runtime、拉取管理服务镜像，并将 `config/services/` 只读挂载。默认 `AI_RUNTIME_BUILD=false`，原有自定义镜像流程继续可用，AI Service 仍为可选模块。自定义外部镜像需要自行集成此 Runtime 才能处理多实例请求。
+
+共享凭据通过本地 `.env` 的 `OPENAI_API_KEY` 传入；每实例独立凭据可写入项目根目录的 `.env.ai-runtime`，例如使用不同的环境变量名，并在各 AI 配置的 `api_key_env` 中引用。该文件只用于提供者凭据，已被 Git 忽略；也可用 `AI_RUNTIME_SECRETS_FILE` 指定受保护的环境文件。设置这些本地文件权限为 `0600`，更新凭据后重建 AI 容器使环境变量生效。请勿将完整安装器 `.env` 作为 Runtime 的额外环境文件。
+
+本阶段提供多 AI 模型与多知识库的运行基础，未来可接入多入口和多平台。健康端点 `GET /health` 仅检查 Runtime 进程存活；配置、凭据和知识文件的可用性在请求时检查。离线测试无需真实 API Key：
+
+```bash
+python3 -m venv runtime/ai-runtime-venv
+runtime/ai-runtime-venv/bin/python -m pip install -r ai_runtime/requirements.txt
+AI_RUNTIME_TEST_PYTHON="$PWD/runtime/ai-runtime-venv/bin/python" bash tests/ai-runtime-fixture-test.sh
+```
 
 备份版本保存在 `BACKUP_DIR`，目录和文件分别限制为仅所有者可访问。每个版本包含 Chatwoot PostgreSQL dump、Chatwoot storage、AI Service 与管理后台持久化数据、受保护的 `.env`、两套 Compose 文件、Nginx 站点配置、SSL 配置记录、版本 manifest 和 SHA-256 校验清单。证书私钥不会复制进备份；`.env` 含真实 Secret，因此备份目录仍应放在受控磁盘中。当前仅支持本地备份，不上传云存储，也不创建定时任务。
 
@@ -135,4 +181,4 @@ bash install.sh
 - 云备份、异地复制和自动调度；
 - 更细粒度的组件升级路径和运维工具。
 
-多 AI、多客服实例、多平台、多租户、多域名和上述扩展能力不属于当前阶段。
+当前已实现多客服实例的配置与 AI Runtime 路由；多平台连接、多租户权限、多域名部署和自动化入口管理继续作为后续阶段。

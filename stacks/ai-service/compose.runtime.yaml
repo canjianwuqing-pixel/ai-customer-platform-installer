@@ -1,0 +1,30 @@
+# Opt-in first-party runtime. The original custom-image stack stays usable.
+services:
+  ai-service:
+    build:
+      context: ../..
+      dockerfile: stacks/ai-service/Dockerfile.runtime
+      args:
+        PYTHON_IMAGE: "${AI_RUNTIME_PYTHON_IMAGE:?AI_RUNTIME_PYTHON_IMAGE is required}"
+    environment:
+      AI_RUNTIME_CONFIG_PATH: /app/config/services
+      AI_DEFAULT_SERVICE_ID: "${AI_DEFAULT_SERVICE_ID:-}"
+      AI_API_BASE_URL: "${AI_API_BASE_URL:-}"
+      AI_SYSTEM_PROMPT: "${AI_SYSTEM_PROMPT:-}"
+      AI_SERVICE_DATA_PATH: "${AI_SERVICE_DATA_PATH:?AI_SERVICE_DATA_PATH is required}"
+      AI_SERVICE_CONTAINER_PORT: "${AI_SERVICE_CONTAINER_PORT:?AI_SERVICE_CONTAINER_PORT is required}"
+    # Only provider-specific environment variables belong in this optional
+    # file. Do not supply the installer's complete .env as an env_file.
+    env_file:
+      - path: "${AI_RUNTIME_SECRETS_FILE:-../../.env.ai-runtime}"
+        required: false
+    volumes:
+      - type: bind
+        source: "${AI_RUNTIME_CONFIG_DIR:-../../config/services}"
+        target: /app/config/services
+        read_only: true
+        bind:
+          create_host_path: false
+    read_only: true
+    tmpfs:
+      - /tmp

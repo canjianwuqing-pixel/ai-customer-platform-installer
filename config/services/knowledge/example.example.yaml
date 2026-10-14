@@ -1,0 +1,4 @@
+# source is relative to AI_SERVICE_DATA_PATH/services/<service_id>/.
+# An empty source disables local knowledge context for this profile.
+source: ""
+max_characters: 12000

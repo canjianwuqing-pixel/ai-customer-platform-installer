@@ -11,10 +11,18 @@ ai_service_install() {
   fi
   log_ok "[ai-service] Docker Compose configuration is valid."
 
-  log_info "[ai-service] Pulling fixed-version FastAPI and administration images."
-  if ! ai_service_compose pull; then
-    log_error "Failed to pull one or more AI Service images."
-    return 1
+  if [[ "${AI_RUNTIME_BUILD:-false}" == "true" ]]; then
+    log_info "[ai-service] Building the configured first-party runtime image."
+    if ! ai_service_compose build ai-service || ! ai_service_compose pull ai-admin; then
+      log_error "Failed to build AI Runtime or pull the administration image."
+      return 1
+    fi
+  else
+    log_info "[ai-service] Pulling fixed-version FastAPI and administration images."
+    if ! ai_service_compose pull; then
+      log_error "Failed to pull one or more AI Service images."
+      return 1
+    fi
   fi
 
   log_info "[ai-service] Starting the FastAPI service and administration backend."

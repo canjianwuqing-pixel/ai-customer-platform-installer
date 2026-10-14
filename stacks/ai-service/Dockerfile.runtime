@@ -1,0 +1,9 @@
+ARG PYTHON_IMAGE
+FROM ${PYTHON_IMAGE}
+
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
+WORKDIR /app
+COPY ai_runtime/requirements.txt /app/requirements.txt
+RUN pip install --no-cache-dir --requirement /app/requirements.txt
+COPY ai_runtime /app/ai_runtime
+CMD ["python", "-m", "ai_runtime"]

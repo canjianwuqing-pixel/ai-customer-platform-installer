@@ -1,0 +1,9 @@
+# Allow-list the runtime source; .env, Git, local profiles, and backups are
+# never sent to the Docker builder.
+**
+!ai_runtime/
+!ai_runtime/*.py
+!ai_runtime/requirements.txt
+!stacks/
+!stacks/ai-service/
+!stacks/ai-service/Dockerfile.runtime

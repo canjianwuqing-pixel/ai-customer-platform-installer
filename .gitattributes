@@ -1,6 +1,10 @@
 *.sh text eol=lf
 *.yaml text eol=lf
 *.yml text eol=lf
+*.py text eol=lf
+stacks/ai-service/Dockerfile.runtime text eol=lf
+ai_runtime/requirements.txt text eol=lf
+.dockerignore text eol=lf
 .env.example text eol=lf
 tests/fixtures/os-release.* text eol=lf
 tests/fixtures/docker-ready/bin/* text eol=lf

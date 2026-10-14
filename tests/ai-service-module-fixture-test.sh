@@ -128,4 +128,15 @@ if ! (
   exit 1
 fi
 
+# First-party runtime uses the same stack with an explicit build overlay.
+(
+  export AI_RUNTIME_BUILD=true
+  export AI_RUNTIME_PYTHON_IMAGE=python:3.12.12-slim-bookworm
+  ai_service_validate_config >/dev/null
+  ai_service_install >/dev/null
+)
+assert_compose_call 'compose.runtime.yaml'
+assert_compose_call 'build ai-service'
+assert_compose_call 'pull ai-admin'
+
 printf '%s\n' 'AI Service fixture test passed.'

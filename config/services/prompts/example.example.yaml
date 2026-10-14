@@ -1,0 +1,3 @@
+# Copy to <prompt_config>.yaml and configure each instance independently.
+system_prompt: ""
+reply_rules: []

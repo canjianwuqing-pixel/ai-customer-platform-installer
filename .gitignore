@@ -8,6 +8,14 @@
 /config/services/*.local.yaml
 /config/domains/local.yaml
 /config/domains/*.local.yaml
+/config/services/ai/*.yaml
+!/config/services/ai/*.example.yaml
+/config/services/prompts/*.yaml
+!/config/services/prompts/*.example.yaml
+/config/services/knowledge/*.yaml
+!/config/services/knowledge/*.example.yaml
+__pycache__/
+*.pyc
 
 # Installer runtime state and logs
 .installer-state

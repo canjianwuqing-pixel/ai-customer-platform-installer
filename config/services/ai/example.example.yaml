@@ -1,0 +1,5 @@
+# Copy to <ai_config>.yaml; select a model and API endpoint explicitly.
+# Store only the environment variable name here, never a credential value.
+model: ""
+api_base_url: ""
+api_key_env: OPENAI_API_KEY

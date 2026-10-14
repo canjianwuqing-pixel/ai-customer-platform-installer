@@ -61,7 +61,7 @@ case "${1:-}" in
       logs)
         printf 'fixture logs for %s\n' "${compose_arguments}"
         ;;
-      config | pull | up | run | start | stop | restart)
+      config | pull | build | up | run | start | stop | restart)
         ;;
       *)
         printf 'Unexpected fixture Docker Compose command: %s\n' "${1:-missing}" >&2

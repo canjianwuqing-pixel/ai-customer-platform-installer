@@ -47,6 +47,27 @@ ai_service_validate_chatwoot_reservation() {
 }
 
 ai_service_validate_config() {
+  if ! validation_is_boolean "${AI_RUNTIME_BUILD:-false}"; then
+    log_error "AI_RUNTIME_BUILD must be true or false."
+    return 1
+  fi
+
+  if [[ "${AI_RUNTIME_BUILD:-false}" == "true" ]]; then
+    if ! validation_is_pinned_container_image "${AI_RUNTIME_PYTHON_IMAGE:-}"; then
+      log_error "AI_RUNTIME_PYTHON_IMAGE must use a fixed tag or digest."
+      return 1
+    fi
+    if [[ -n "${AI_DEFAULT_SERVICE_ID:-}" &&
+      ! "${AI_DEFAULT_SERVICE_ID}" =~ ^[a-z][a-z0-9_-]{0,63}$ ]]; then
+      log_error "AI_DEFAULT_SERVICE_ID must be a valid service instance identifier."
+      return 1
+    fi
+    if ! file_is_readable "${INSTALLER_ROOT}/stacks/ai-service/compose.runtime.yaml"; then
+      log_error "The first-party AI Runtime Compose overlay is unavailable."
+      return 1
+    fi
+  fi
+
   validation_require_keys \
     AI_SERVICE_IMAGE \
     AI_ADMIN_IMAGE \

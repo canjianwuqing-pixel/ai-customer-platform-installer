@@ -8,10 +8,17 @@ ai_service_initialize_config() {
 }
 
 ai_service_compose() {
+  local -a runtime_arguments=()
+
+  if [[ "${AI_RUNTIME_BUILD:-false}" == "true" ]]; then
+    runtime_arguments+=(--file "${INSTALLER_ROOT}/stacks/ai-service/compose.runtime.yaml")
+  fi
+
   docker_execute compose \
     --project-name "${AI_SERVICE_COMPOSE_PROJECT}" \
     --env-file "${CONFIG_FILE}" \
     --file "${AI_SERVICE_COMPOSE_FILE}" \
+    "${runtime_arguments[@]}" \
     "$@"
 }
 
