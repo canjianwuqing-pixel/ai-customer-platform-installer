@@ -73,6 +73,15 @@ validation_is_email() {
   [[ "${value}" =~ ^[^[:space:]@]+@[^[:space:]@]+\.[^[:space:]@]+$ ]]
 }
 
+validation_is_boolean() {
+  local value="$1"
+
+  case "${value}" in
+    true | false) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 validation_is_compose_project_name() {
   local value="$1"
   [[ "${value}" =~ ^[a-z0-9][a-z0-9_-]*$ ]]
@@ -103,6 +112,7 @@ validation_validate_base_config() {
   validation_require_keys \
     DOMAIN \
     EMAIL \
+    LETSENCRYPT_EMAIL \
     DATABASE_PASSWORD \
     REDIS_PASSWORD \
     SECRET_KEY_BASE \

@@ -14,6 +14,11 @@ case "${1:-}" in
       printf '%s\n' 'nginx: fixture configuration test failed' >&2
       exit 1
     fi
+    if [[ "${NGINX_FIXTURE_HTTPS_FAILURE:-false}" == "true" ]] &&
+      grep -Rqs -- 'listen 443 ssl;' "${NGINX_CONFIG_ROOT:-/etc/nginx}/sites-available"; then
+      printf '%s\n' 'nginx: fixture HTTPS configuration test failed' >&2
+      exit 1
+    fi
     printf '%s\n' 'nginx: fixture configuration test is successful' >&2
     ;;
   *)

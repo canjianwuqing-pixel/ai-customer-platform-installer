@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+if [[ -n "${CERTBOT_FIXTURE_LOG:-}" ]]; then
+  printf 'certbot %s\n' "$*" >>"${CERTBOT_FIXTURE_LOG}"
+fi
+
+command_name=""
+cert_name=""
+previous=""
+for argument in "$@"; do
+  case "${argument}" in
+    --version | plugins | certonly | certificates | renew)
+      [[ -z "${command_name}" ]] && command_name="${argument}"
+      ;;
+  esac
+
+  if [[ "${previous}" == "--cert-name" ]]; then
+    cert_name="${argument}"
+  fi
+  previous="${argument}"
+done
+
+case "${command_name}" in
+  --version)
+    printf '%s\n' 'certbot 2.9.0-fixture'
+    ;;
+  plugins)
+    printf '%s\n' '* nginx'
+    ;;
+  certonly)
+    if [[ -z "${cert_name}" || -z "${CERTBOT_CONFIG_DIR:-}" ]]; then
+      printf '%s\n' 'Fixture certbot requires --cert-name and CERTBOT_CONFIG_DIR.' >&2
+      exit 1
+    fi
+    mkdir -p -- "${CERTBOT_CONFIG_DIR}/live/${cert_name}" "${CERTBOT_CONFIG_DIR}/renewal"
+    printf '%s\n' 'fixture certificate only; not a real certificate' >"${CERTBOT_CONFIG_DIR}/live/${cert_name}/fullchain.pem"
+    printf '%s\n' 'fixture private key only; not a real private key' >"${CERTBOT_CONFIG_DIR}/live/${cert_name}/privkey.pem"
+    printf 'cert = %s/live/%s/cert.pem\n' "${CERTBOT_CONFIG_DIR}" "${cert_name}" >"${CERTBOT_CONFIG_DIR}/renewal/${cert_name}.conf"
+    ;;
+  certificates)
+    [[ -n "${cert_name}" && -s "${CERTBOT_CONFIG_DIR}/live/${cert_name}/fullchain.pem" ]]
+    ;;
+  renew)
+    if [[ "${CERTBOT_FIXTURE_RENEW_FAILURE:-false}" == "true" ]]; then
+      printf '%s\n' 'Fixture renewal failure.' >&2
+      exit 1
+    fi
+    ;;
+  *)
+    printf 'Unexpected fixture Certbot command: %s\n' "$*" >&2
+    exit 1
+    ;;
+esac

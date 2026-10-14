@@ -119,7 +119,14 @@ nginx_enabled_site_is_compatible() {
   fi
 
   if [[ ! -L "${NGINX_SITE_ENABLED_PATH}" ]]; then
-    log_error "Nginx enabled-site path already exists and is not a symlink: ${NGINX_SITE_ENABLED_PATH}"
+    if [[ -f "${NGINX_SITE_ENABLED_PATH}" ]] &&
+      run_as_root grep -Fq -- '# Managed by AI Customer Platform Installer.' "${NGINX_SITE_ENABLED_PATH}" &&
+      run_as_root cmp -s -- "${NGINX_SITE_ENABLED_PATH}" "${NGINX_SITE_CONFIG_PATH}"; then
+      log_warn "[nginx] Managed enabled-site is a regular file; it will be migrated safely."
+      return 2
+    fi
+
+    log_error "Nginx enabled-site path already exists and is not a compatible managed site: ${NGINX_SITE_ENABLED_PATH}"
     return 1
   fi
 
@@ -142,6 +149,7 @@ nginx_rollback_site_config() {
   local backup_path="$2"
   local config_changed="$3"
   local enabled_link_created="$4"
+  local enabled_regular_replaced="${5:-false}"
 
   if [[ "${enabled_link_created}" == "true" ]]; then
     run_as_root rm -f -- "${NGINX_SITE_ENABLED_PATH}" || true
@@ -157,6 +165,10 @@ nginx_rollback_site_config() {
     run_as_root rm -f -- "${backup_path}" || true
   fi
 
+  if [[ "${enabled_regular_replaced}" == "true" ]]; then
+    run_as_root cp -a -- "${NGINX_SITE_CONFIG_PATH}" "${NGINX_SITE_ENABLED_PATH}" || true
+  fi
+
   log_warn "[nginx] Restored the previously active site configuration."
 }
 
@@ -167,6 +179,9 @@ nginx_apply_candidate() {
   local had_existing_config="false"
   local config_changed="false"
   local enabled_link_created="false"
+  local enabled_regular_site="false"
+  local enabled_regular_replaced="false"
+  local enabled_site_status=0
 
   if [[ ! -d "${NGINX_SITES_AVAILABLE_DIR}" ]] &&
     ! run_as_root install -d -m 0755 "${NGINX_SITES_AVAILABLE_DIR}"; then
@@ -180,8 +195,15 @@ nginx_apply_candidate() {
     return 1
   fi
 
-  if ! nginx_enabled_site_is_compatible; then
-    return 1
+  if nginx_enabled_site_is_compatible; then
+    :
+  else
+    enabled_site_status=$?
+    if ((enabled_site_status == 2)); then
+      enabled_regular_site="true"
+    else
+      return 1
+    fi
   fi
 
   if [[ -L "${NGINX_SITE_CONFIG_PATH}" ]]; then
@@ -226,10 +248,20 @@ nginx_apply_candidate() {
     config_changed="true"
   fi
 
+  if [[ "${enabled_regular_site}" == "true" && "${config_changed}" == "true" ]]; then
+    if ! run_as_root rm -f -- "${NGINX_SITE_ENABLED_PATH}"; then
+      nginx_rollback_site_config \
+        "${had_existing_config}" "${backup_path}" "${config_changed}" "${enabled_link_created}" "${enabled_regular_replaced}"
+      log_error "Failed to replace the managed regular enabled-site file."
+      return 1
+    fi
+    enabled_regular_replaced="true"
+  fi
+
   if [[ ! -e "${NGINX_SITE_ENABLED_PATH}" && ! -L "${NGINX_SITE_ENABLED_PATH}" ]]; then
     if ! run_as_root ln -s "${NGINX_SITE_CONFIG_PATH}" "${NGINX_SITE_ENABLED_PATH}"; then
       nginx_rollback_site_config \
-        "${had_existing_config}" "${backup_path}" "${config_changed}" "${enabled_link_created}"
+        "${had_existing_config}" "${backup_path}" "${config_changed}" "${enabled_link_created}" "${enabled_regular_replaced}"
       log_error "Failed to enable the Chatwoot Nginx site."
       return 1
     fi
@@ -238,13 +270,13 @@ nginx_apply_candidate() {
 
   if ! nginx_test_configuration; then
     nginx_rollback_site_config \
-      "${had_existing_config}" "${backup_path}" "${config_changed}" "${enabled_link_created}"
+      "${had_existing_config}" "${backup_path}" "${config_changed}" "${enabled_link_created}" "${enabled_regular_replaced}"
     return 1
   fi
 
   if ! nginx_reload_service; then
     nginx_rollback_site_config \
-      "${had_existing_config}" "${backup_path}" "${config_changed}" "${enabled_link_created}"
+      "${had_existing_config}" "${backup_path}" "${config_changed}" "${enabled_link_created}" "${enabled_regular_replaced}"
     if nginx_test_configuration; then
       if ! nginx_reload_service; then
         log_warn "[nginx] Restored configuration is valid on disk, but the service still could not be reloaded."
@@ -275,6 +307,14 @@ nginx_configure() {
   fi
 
   nginx_validate_config
+
+  if [[ -f "${NGINX_SITE_CONFIG_PATH}" ]] &&
+    run_as_root grep -Fq -- '# Managed by AI Customer Platform Installer domain module.' "${NGINX_SITE_CONFIG_PATH}"; then
+    log_ok "[nginx] Domain module already manages the HTTPS site; preserving its active configuration."
+    nginx_test_configuration
+    return 0
+  fi
+
   candidate_file="$(mktemp)"
 
   if ! nginx_render_template "${candidate_file}"; then

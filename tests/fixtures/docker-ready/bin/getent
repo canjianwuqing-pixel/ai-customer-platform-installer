@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+if [[ "${1:-}" != "ahosts" || -z "${2:-}" ]]; then
+  printf 'Unexpected fixture getent command: %s\n' "$*" >&2
+  exit 1
+fi
+
+if [[ -n "${DOMAIN_FIXTURE_LOG:-}" ]]; then
+  printf 'getent %s\n' "$*" >>"${DOMAIN_FIXTURE_LOG}"
+fi
+
+printf '%s\n' '192.0.2.10 STREAM fixture.example.test'

@@ -23,9 +23,10 @@ readonly -a MODULE_FILES=(
   "modules/nginx/install.sh"
   "modules/nginx/configure.sh"
   "modules/nginx/verify.sh"
-  "modules/ssl/install.sh"
-  "modules/ssl/configure.sh"
-  "modules/ssl/verify.sh"
+  "modules/domain/check.sh"
+  "modules/domain/configure.sh"
+  "modules/domain/ssl.sh"
+  "modules/domain/verify.sh"
 )
 
 for module_file in "${MODULE_FILES[@]}"; do
@@ -57,9 +58,10 @@ register_core_steps() {
   register_installer_step "nginx.install" nginx_install
   register_installer_step "nginx.configure" nginx_configure
   register_installer_step "nginx.verify" nginx_verify
-  register_installer_step "ssl.install" ssl_install
-  register_installer_step "ssl.configure" ssl_configure
-  register_installer_step "ssl.verify" ssl_verify
+  register_installer_step "domain.check" domain_check
+  register_installer_step "domain.configure" domain_configure
+  register_installer_step "domain.ssl" domain_ssl
+  register_installer_step "domain.verify" domain_verify
 }
 
 run_registered_steps() {

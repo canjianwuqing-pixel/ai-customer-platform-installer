@@ -5,7 +5,7 @@ if [[ -n "${NGINX_FIXTURE_LOG:-}" ]]; then
   printf 'systemctl %s\n' "$*" >>"${NGINX_FIXTURE_LOG}"
 fi
 
-if [[ "${1:-}" == "is-active" ]]; then
+if [[ "${1:-}" == "is-active" || "${1:-}" == "is-enabled" ]]; then
   exit 0
 fi
 

@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+# Managed by AI Customer Platform Installer domain module.
+
+nginx -t
+
+if command -v systemctl >/dev/null 2>&1; then
+  systemctl reload {{NGINX_SERVICE_NAME}}
+else
+  service {{NGINX_SERVICE_NAME}} reload
+fi

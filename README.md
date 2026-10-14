@@ -4,16 +4,18 @@
 
 ## 当前阶段
 
-当前仓库已经实现四个基础模块，包括：
+当前仓库已经实现单域名 HTTPS 部署所需的基础模块，包括：
 
 - 安装入口和模块注册机制；
 - 统一日志、配置读取、状态记录和基础校验接口；
 - System 环境检测与 Docker 官方安装流程；
 - Chatwoot、PostgreSQL、Redis、Sidekiq 的 Docker Compose Stack；
 - Chatwoot 的 Nginx HTTP 反向代理与 WebSocket 支持；
+- 单域名 DNS 检测、Let's Encrypt 证书申请和 HTTPS 切换；
+- Certbot 自动续签、Nginx deploy hook 和续签 dry-run；
 - 配置模板、fixture 测试和文档目录。
 
-系统检测模块提供只读的 Ubuntu 版本、权限、CPU、内存、磁盘、架构和网络检查。Docker 模块可以检测现有环境，并在缺失时通过 Docker 官方 APT 仓库安装 Engine、CLI、containerd、Buildx 和 Compose Plugin。Chatwoot 模块会校验 Compose 配置、拉取固定版本镜像、先启动并等待 PostgreSQL/Redis、执行 `db:chatwoot_prepare`，再启动 Rails 与 Sidekiq。Nginx 模块使用独立站点模板配置 HTTP、转发头和 `/cable` WebSocket 代理，并在安全切换配置后 reload。SSL 模块仍是安全的 no-op 占位实现。
+系统检测模块提供只读的 Ubuntu 版本、权限、CPU、内存、磁盘、架构和网络检查。Docker 模块可以检测现有环境，并在缺失时通过 Docker 官方 APT 仓库安装 Engine、CLI、containerd、Buildx 和 Compose Plugin。Chatwoot 模块会校验 Compose 配置、拉取固定版本镜像、先启动并等待 PostgreSQL/Redis、执行 `db:chatwoot_prepare`，再启动 Rails 与 Sidekiq。Nginx 模块负责安装服务和提供初始 HTTP 反向代理；domain 模块负责域名解析检测、Nginx 域名绑定验证、Certbot/Let's Encrypt 证书生命周期以及从 HTTP 到 HTTPS 的安全切换。
 
 ## 配置原则
 
@@ -23,7 +25,11 @@
 cp .env.example .env
 ```
 
-不得向 Git 提交真实域名、邮箱、数据库密码、Redis 密码、密钥或 Token。`.env` 已加入 `.gitignore`。
+不得向 Git 提交真实域名、邮箱、数据库密码、Redis 密码、密钥、证书或 Token。`.env`、PEM 和私钥文件已加入 `.gitignore`。
+
+`DOMAIN` 是当前唯一部署域名；`LETSENCRYPT_EMAIL` 用于 Let's Encrypt 账户和证书通知，`EMAIL` 继续作为 Chatwoot 的业务发件地址。V1 固定使用 Let's Encrypt HTTP-01 验证，因此域名必须能通过公共 DNS 解析到部署入口，公网 TCP 80 端口必须可达。
+
+`modules/domain/providers/` 和 `modules/domain/dns-providers/` 已作为后续扩展边界保留。当前不会读取 Cloudflare 凭据，也不实现 DNS-01、多域名或泛域名证书。
 
 Chatwoot、pgvector/PostgreSQL 和 Redis 镜像均通过 `.env` 使用明确版本标签。PostgreSQL 与 Redis 不发布宿主机端口；Rails 默认只绑定到 `.env` 配置的本地地址，后续由 Nginx 模块接入。
 
@@ -36,8 +42,10 @@ Chatwoot、pgvector/PostgreSQL 和 Redis 镜像均通过 `.env` 使用明确版�
 3. 检查或安装 Docker 与 Docker Compose；
 4. 配置并启动 PostgreSQL、Redis、Chatwoot 和 Sidekiq；
 5. 配置 Nginx 反向代理及 WebSocket；
-6. 申请 Let's Encrypt 证书并配置自动续签；
-7. 执行服务健康检查并输出部署结果。
+6. 检查域名解析与 Nginx HTTP-01 前置条件；
+7. 申请 Let's Encrypt 证书并切换 HTTPS；
+8. 安装续签 deploy hook、启用 Certbot timer 并执行 dry-run；
+9. 执行服务健康检查并输出部署结果。
 
 入口脚本通过注册步骤调用各个模块。模块之间不直接依赖，只通过 `lib/` 中的公共接口共享日志、配置、状态和校验能力，为重复执行和断点恢复预留基础。
 
@@ -49,8 +57,10 @@ Chatwoot、pgvector/PostgreSQL 和 Redis 镜像均通过 `.env` 使用明确版�
 bash install.sh
 ```
 
-该命令会执行只读系统检测，在 Docker 环境缺失时进入 Docker 官方安装流程，部署 Chatwoot Stack，并安装及配置 Nginx HTTP 反向代理。SSL 步骤目前仍只输出占位日志，因此这一阶段不提供 HTTPS。
+该命令会执行只读系统检测，在 Docker 环境缺失时进入 Docker 官方安装流程，部署 Chatwoot Stack，安装 Nginx，并为 `.env` 中的单个域名申请证书和启用 HTTPS。证书续签由 Certbot systemd timer 执行，续签成功后的 deploy hook 会先运行 `nginx -t`，再 reload Nginx。
 系统检测只支持 Ubuntu 22.04 和 24.04；在其他操作系统上运行会输出检测错误并安全退出。
+
+首次部署前请确认域名已经解析且公网端口 80、443 可访问。默认会执行一次 `certbot renew --dry-run`；如需在受限测试环境暂时跳过，可设置 `CERTBOT_RENEW_DRY_RUN=false`，生产部署建议保持启用。
 
 ## 后续扩展方向
 
@@ -60,6 +70,7 @@ bash install.sh
 - 知识库与向量检索；
 - 多客服渠道连接；
 - 多域名入口；
+- Cloudflare DNS API、DNS-01 自动验证与泛域名证书；
 - 备份与恢复；
 - 安装验证、升级和运维工具。
 
