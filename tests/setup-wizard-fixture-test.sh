@@ -109,7 +109,11 @@ for expected_output in \
   '请输入管理员邮箱：' \
   'AI Customer Platform 安装完成' \
   'https://chat.example.test' \
-  'AI Service 未配置，可后续启用。'; do
+  'AI Service 未配置，可后续启用。' \
+  '维护命令：' \
+  './manage.sh status' \
+  './manage.sh logs' \
+  './manage.sh restart'; do
   if ! grep -Fq -- "${expected_output}" "${INSTALL_OUTPUT}"; then
     printf 'Missing installation output: %s\n' "${expected_output}" >&2
     exit 1

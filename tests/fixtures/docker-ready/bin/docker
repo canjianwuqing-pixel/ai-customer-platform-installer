@@ -42,9 +42,15 @@ case "${1:-}" in
           service_name="${!#}"
           printf 'fixture-container-%s\n' "${service_name}"
         elif [[ "${compose_arguments}" == *"ai-customer-platform-ai-test"* ]]; then
-          printf '%s\n' ai-service ai-admin
+          for service_name in ai-service ai-admin; do
+            [[ "${service_name}" == "${DOCKER_FIXTURE_MISSING_SERVICE:-}" ]] ||
+              printf '%s\n' "${service_name}"
+          done
         else
-          printf '%s\n' postgres redis rails sidekiq
+          for service_name in postgres redis rails sidekiq; do
+            [[ "${service_name}" == "${DOCKER_FIXTURE_MISSING_SERVICE:-}" ]] ||
+              printf '%s\n' "${service_name}"
+          done
         fi
         ;;
       exec)
@@ -52,7 +58,10 @@ case "${1:-}" in
           printf '%s\n' 'fixture-postgresql-custom-dump'
         fi
         ;;
-      config | pull | up | run | start | stop)
+      logs)
+        printf 'fixture logs for %s\n' "${compose_arguments}"
+        ;;
+      config | pull | up | run | start | stop | restart)
         ;;
       *)
         printf 'Unexpected fixture Docker Compose command: %s\n' "${1:-missing}" >&2

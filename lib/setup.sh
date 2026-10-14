@@ -200,6 +200,17 @@ setup_print_completion() {
       '' \
       'AI Service 未配置，可后续启用。' \
       '' \
+      '维护命令：' \
+      '' \
+      '状态：' \
+      './manage.sh status' \
+      '' \
+      '日志：' \
+      './manage.sh logs' \
+      '' \
+      '重启：' \
+      './manage.sh restart' \
+      '' \
       '================================'
     return 0
   fi
@@ -221,6 +232,17 @@ setup_print_completion() {
     "${password_line}" \
     '' \
     '请首次登录后修改密码。' \
+    '' \
+    '维护命令：' \
+    '' \
+    '状态：' \
+    './manage.sh status' \
+    '' \
+    '日志：' \
+    './manage.sh logs' \
+    '' \
+    '重启：' \
+    './manage.sh restart' \
     '' \
     '================================'
 }

@@ -73,6 +73,22 @@ bash install.sh
 
 首次部署前请确认域名已经解析且公网端口 80、443 可访问。默认会执行一次 `certbot renew --dry-run`；如需在受限测试环境暂时跳过，可设置 `CERTBOT_RENEW_DRY_RUN=false`，生产部署建议保持启用。
 
+## 常用管理命令
+
+安装完成后，可以直接在项目根目录统一管理服务，不需要进入 `stacks/chatwoot/` 或 `stacks/ai-service/`：
+
+```bash
+./manage.sh status
+./manage.sh logs
+./manage.sh logs-follow
+./manage.sh restart
+./manage.sh stop
+./manage.sh start
+./manage.sh health
+```
+
+`status` 显示 Chatwoot、Sidekiq、PostgreSQL、Redis 以及可选 AI Service 的运行状态；`health` 额外检查 PostgreSQL、Redis 和 HTTP 健康端点。未配置 `AI_SERVICE_IMAGE` 时，管理脚本只管理 Chatwoot，并显示“AI Service 未启用，跳过。”。管理脚本只读取现有 `.env` 和 Compose 文件，不会修改配置、生成 Secret、拉取镜像或执行数据库迁移。
+
 手动创建备份、查看版本和恢复：
 
 ```bash
