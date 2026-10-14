@@ -53,10 +53,51 @@ validation_is_http_url() {
   [[ "${url}" =~ ^https?://[^[:space:]]+$ ]]
 }
 
+validation_is_port() {
+  local value="$1"
+
+  validation_is_positive_integer "${value}" && ((value <= 65535))
+}
+
+validation_is_hostname() {
+  local value="$1"
+
+  [[ ${#value} -le 253 ]] &&
+    [[ "${value}" =~ ^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$ ]] &&
+    [[ "${value}" == *.* ]] &&
+    [[ "${value}" != *..* ]]
+}
+
+validation_is_email() {
+  local value="$1"
+  [[ "${value}" =~ ^[^[:space:]@]+@[^[:space:]@]+\.[^[:space:]@]+$ ]]
+}
+
+validation_is_compose_project_name() {
+  local value="$1"
+  [[ "${value}" =~ ^[a-z0-9][a-z0-9_-]*$ ]]
+}
+
+validation_is_bind_address() {
+  local value="$1"
+
+  [[ "${value}" =~ ^[A-Za-z0-9][A-Za-z0-9.-]*[A-Za-z0-9]$ ]] &&
+    [[ "${value}" != *..* ]]
+}
+
+validation_is_exact_semver_tag() {
+  local value="$1"
+  [[ "${value}" =~ ^v?[0-9]+\.[0-9]+\.[0-9]+([._-][A-Za-z0-9][A-Za-z0-9._-]*)?$ ]]
+}
+
+validation_is_exact_pgvector_tag() {
+  local value="$1"
+  [[ "${value}" =~ ^[0-9]+\.[0-9]+\.[0-9]+-pg[0-9]+(-[a-z0-9][a-z0-9.-]*)?$ ]]
+}
+
 validation_validate_base_config() {
   if [[ "${CONFIG_LOADED}" != "true" ]]; then
-    log_warn "Base configuration validation skipped because no .env file is loaded."
-    return 0
+    die "A populated .env configuration file is required before installation."
   fi
 
   validation_require_keys \

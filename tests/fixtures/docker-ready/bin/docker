@@ -1,16 +1,50 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
+if [[ -n "${DOCKER_FIXTURE_LOG:-}" ]]; then
+  printf '%s\n' "$*" >>"${DOCKER_FIXTURE_LOG}"
+fi
+
 case "${1:-}" in
   --version)
     printf '%s\n' 'Docker version 29.0.0, build fixture'
     ;;
   compose)
-    if [[ "${2:-}" == "version" ]]; then
+    shift
+
+    if [[ "${1:-}" == "version" ]]; then
       printf '%s\n' 'Docker Compose version v5.0.0-fixture'
+      exit 0
     fi
+
+    while (($# > 0)); do
+      case "$1" in
+        --project-name | --env-file | --file)
+          shift 2
+          ;;
+        *)
+          break
+          ;;
+      esac
+    done
+
+    case "${1:-}" in
+      ps)
+        printf '%s\n' postgres redis rails sidekiq
+        ;;
+      config | pull | up | exec | run)
+        ;;
+      *)
+        printf 'Unexpected fixture Docker Compose command: %s\n' "${1:-missing}" >&2
+        exit 1
+        ;;
+    esac
     ;;
   info | version)
     printf '%s\n' 'Docker daemon fixture'
+    ;;
+  *)
+    printf 'Unexpected fixture Docker command: %s\n' "${1:-missing}" >&2
+    exit 1
     ;;
 esac

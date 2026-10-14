@@ -10,7 +10,7 @@ config_load_optional() {
   CONFIG_FILE="${config_file}"
 
   if [[ ! -f "${CONFIG_FILE}" ]]; then
-    log_warn "Configuration file not found: ${CONFIG_FILE}. Continuing in skeleton mode."
+    log_warn "Configuration file not found: ${CONFIG_FILE}."
     return 0
   fi
 

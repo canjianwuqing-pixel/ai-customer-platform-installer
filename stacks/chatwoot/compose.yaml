@@ -1,0 +1,109 @@
+x-chatwoot-base: &chatwoot-base
+  image: "chatwoot/chatwoot:${CHATWOOT_VERSION:?CHATWOOT_VERSION is required}"
+  environment:
+    ACTIVE_STORAGE_SERVICE: local
+    FRONTEND_URL: "https://${DOMAIN:?DOMAIN is required}"
+    INSTALLATION_ENV: docker
+    MAILER_SENDER_EMAIL: "${EMAIL:?EMAIL is required}"
+    NODE_ENV: production
+    POSTGRES_DATABASE: "${DATABASE_NAME:?DATABASE_NAME is required}"
+    POSTGRES_HOST: "${DATABASE_HOST:?DATABASE_HOST is required}"
+    POSTGRES_PASSWORD: "${DATABASE_PASSWORD:?DATABASE_PASSWORD is required}"
+    POSTGRES_USERNAME: "${DATABASE_USER:?DATABASE_USER is required}"
+    RAILS_ENV: production
+    RAILS_LOG_TO_STDOUT: "true"
+    REDIS_PASSWORD: "${REDIS_PASSWORD:?REDIS_PASSWORD is required}"
+    REDIS_URL: "redis://${REDIS_HOST:?REDIS_HOST is required}:6379"
+    SECRET_KEY_BASE: "${SECRET_KEY_BASE:?SECRET_KEY_BASE is required}"
+  networks:
+    - chatwoot
+  volumes:
+    - chatwoot_storage_data:/app/storage
+
+services:
+  postgres:
+    image: "pgvector/pgvector:${POSTGRES_VERSION:?POSTGRES_VERSION is required}"
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: "${DATABASE_NAME:?DATABASE_NAME is required}"
+      POSTGRES_PASSWORD: "${DATABASE_PASSWORD:?DATABASE_PASSWORD is required}"
+      POSTGRES_USER: "${DATABASE_USER:?DATABASE_USER is required}"
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - 'pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"'
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    networks:
+      - chatwoot
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  redis:
+    image: "redis:${REDIS_VERSION:?REDIS_VERSION is required}"
+    restart: unless-stopped
+    command:
+      - sh
+      - -c
+      - 'exec redis-server --appendonly yes --requirepass "$${REDIS_PASSWORD}"'
+    environment:
+      REDIS_PASSWORD: "${REDIS_PASSWORD:?REDIS_PASSWORD is required}"
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - 'redis-cli --no-auth-warning -a "$${REDIS_PASSWORD}" ping | grep -q PONG'
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 5s
+    networks:
+      - chatwoot
+    volumes:
+      - redis_data:/data
+
+  rails:
+    <<: *chatwoot-base
+    restart: unless-stopped
+    entrypoint: docker/entrypoints/rails.sh
+    command:
+      - bundle
+      - exec
+      - rails
+      - server
+      - -p
+      - "3000"
+      - -b
+      - 0.0.0.0
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "${CHATWOOT_BIND_ADDRESS:?CHATWOOT_BIND_ADDRESS is required}:${CHATWOOT_HTTP_PORT:?CHATWOOT_HTTP_PORT is required}:3000"
+
+  sidekiq:
+    <<: *chatwoot-base
+    restart: unless-stopped
+    command:
+      - bundle
+      - exec
+      - sidekiq
+      - -C
+      - config/sidekiq.yml
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+networks:
+  chatwoot:
+    driver: bridge
+
+volumes:
+  chatwoot_storage_data:
+  postgres_data:
+  redis_data:

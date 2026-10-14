@@ -4,14 +4,15 @@
 
 ## 当前阶段
 
-当前仓库只提供第一阶段项目骨架，包括：
+当前仓库已经实现前三个基础模块，包括：
 
 - 安装入口和模块注册机制；
 - 统一日志、配置读取、状态记录和基础校验接口；
-- System、Docker、Chatwoot、Nginx、SSL 模块占位文件；
-- Chatwoot Stack、配置模板、测试和文档目录。
+- System 环境检测与 Docker 官方安装流程；
+- Chatwoot、PostgreSQL、Redis、Sidekiq 的 Docker Compose Stack；
+- 配置模板、fixture 测试和文档目录。
 
-系统检测模块已经提供只读的 Ubuntu 版本、权限、CPU、内存、磁盘、架构和网络检查。Docker 模块可以检测现有环境，并在缺失时通过 Docker 官方 APT 仓库安装 Engine、CLI、containerd、Buildx 和 Compose Plugin。Chatwoot、Nginx 和 SSL 模块仍然是安全的 no-op 占位实现。
+系统检测模块提供只读的 Ubuntu 版本、权限、CPU、内存、磁盘、架构和网络检查。Docker 模块可以检测现有环境，并在缺失时通过 Docker 官方 APT 仓库安装 Engine、CLI、containerd、Buildx 和 Compose Plugin。Chatwoot 模块会校验 Compose 配置、拉取固定版本镜像、先启动并等待 PostgreSQL/Redis、执行 `db:chatwoot_prepare`，再启动 Rails 与 Sidekiq。Nginx 和 SSL 模块仍是安全的 no-op 占位实现。
 
 ## 配置原则
 
@@ -22,6 +23,8 @@ cp .env.example .env
 ```
 
 不得向 Git 提交真实域名、邮箱、数据库密码、Redis 密码、密钥或 Token。`.env` 已加入 `.gitignore`。
+
+Chatwoot、pgvector/PostgreSQL 和 Redis 镜像均通过 `.env` 使用明确版本标签。PostgreSQL 与 Redis 不发布宿主机端口；Rails 默认只绑定到 `.env` 配置的本地地址，后续由 Nginx 模块接入。
 
 ## 安装流程规划
 
@@ -37,15 +40,15 @@ cp .env.example .env
 
 入口脚本通过注册步骤调用各个模块。模块之间不直接依赖，只通过 `lib/` 中的公共接口共享日志、配置、状态和校验能力，为重复执行和断点恢复预留基础。
 
-## 当前骨架运行方式
+## 当前运行方式
 
-可以运行入口脚本检查模块编排和日志输出：
+填写 `.env` 后运行统一入口：
 
 ```bash
 bash install.sh
 ```
 
-该命令会执行只读系统检测，并在 Docker 环境缺失时进入 Docker 官方安装流程。Chatwoot、Nginx 和 SSL 步骤目前仍只输出占位日志。
+该命令会执行只读系统检测，在 Docker 环境缺失时进入 Docker 官方安装流程，并部署 Chatwoot Stack。Nginx 和 SSL 步骤目前仍只输出占位日志，因此这一阶段只提供本机绑定的 Chatwoot HTTP 服务。
 系统检测只支持 Ubuntu 22.04 和 24.04；在其他操作系统上运行会输出检测错误并安全退出。
 
 ## 后续扩展方向

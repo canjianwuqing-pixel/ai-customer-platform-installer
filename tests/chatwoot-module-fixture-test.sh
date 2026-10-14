@@ -1,0 +1,81 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+readonly TEST_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+readonly COMPOSE_FILE="${TEST_ROOT}/stacks/chatwoot/compose.yaml"
+readonly DOCKER_CALL_LOG="$(mktemp)"
+
+cleanup() {
+  rm -f -- "${DOCKER_CALL_LOG}"
+}
+trap cleanup EXIT
+
+export PATH="${TEST_ROOT}/tests/fixtures/docker-ready/bin:${PATH}"
+export CONFIG_FILE="${TEST_ROOT}/tests/fixtures/chatwoot.test.env"
+export DOCKER_FIXTURE_LOG="${DOCKER_CALL_LOG}"
+export SYSTEM_OS_RELEASE_FILE="${TEST_ROOT}/tests/fixtures/os-release.ubuntu-24.04"
+export SYSTEM_NETWORK_TIMEOUT_SECONDS="2"
+
+"${TEST_ROOT}/install.sh"
+
+assert_compose_call() {
+  local expected_fragment="$1"
+
+  if ! grep -Fq -- "${expected_fragment}" "${DOCKER_CALL_LOG}"; then
+    printf 'Missing expected Docker Compose call: %s\n' "${expected_fragment}" >&2
+    exit 1
+  fi
+}
+
+assert_compose_call 'config --quiet'
+assert_compose_call 'pull'
+assert_compose_call 'up -d postgres redis'
+assert_compose_call 'exec -T postgres pg_isready'
+assert_compose_call 'exec -T redis sh -c'
+assert_compose_call 'run --rm rails bundle exec rails db:chatwoot_prepare'
+assert_compose_call 'up -d rails sidekiq'
+assert_compose_call 'ps --status running --services'
+
+previous_line=0
+for expected_fragment in \
+  'config --quiet' \
+  'pull' \
+  'up -d postgres redis' \
+  'exec -T postgres pg_isready' \
+  'exec -T redis sh -c' \
+  'run --rm rails bundle exec rails db:chatwoot_prepare' \
+  'up -d rails sidekiq'; do
+  current_line="$(grep -nF -- "${expected_fragment}" "${DOCKER_CALL_LOG}" | head -n 1 | cut -d: -f1)"
+  if [[ -z "${current_line}" ]] || ((current_line <= previous_line)); then
+    printf 'Docker Compose call is out of order: %s\n' "${expected_fragment}" >&2
+    exit 1
+  fi
+  previous_line="${current_line}"
+done
+
+postgres_block="$(sed -n '/^  postgres:/,/^  redis:/p' "${COMPOSE_FILE}")"
+redis_block="$(sed -n '/^  redis:/,/^  rails:/p' "${COMPOSE_FILE}")"
+
+if grep -Eq '^[[:space:]]+ports:' <<<"${postgres_block}"; then
+  printf '%s\n' 'PostgreSQL must not publish host ports.' >&2
+  exit 1
+fi
+
+if grep -Eq '^[[:space:]]+ports:' <<<"${redis_block}"; then
+  printf '%s\n' 'Redis must not publish host ports.' >&2
+  exit 1
+fi
+
+if grep -Fq ':latest' "${COMPOSE_FILE}"; then
+  printf '%s\n' 'Compose images must not use latest tags.' >&2
+  exit 1
+fi
+
+for volume_name in postgres_data redis_data chatwoot_storage_data; do
+  if ! grep -Fq -- "${volume_name}:" "${COMPOSE_FILE}"; then
+    printf 'Missing required named volume: %s\n' "${volume_name}" >&2
+    exit 1
+  fi
+done
+
+printf '%s\n' 'Chatwoot Ubuntu fixture test passed.'
