@@ -38,6 +38,14 @@ Chatwoot、pgvector/PostgreSQL 和 Redis 镜像均通过 `.env` 使用明确版�
 
 AI Service 不是基础安装必选项。未设置 `AI_SERVICE_IMAGE` 时，安装器会跳过全部 AI 部署步骤并在完成时提示可后续启用。高级用户可在 `.env` 中同时设置 `AI_SERVICE_IMAGE` 和 `AI_ADMIN_IMAGE`；两个镜像都必须使用固定标签或 SHA-256 digest，并遵守 Compose 中声明的环境变量与健康端点契约。OpenAI API Key 和模型选择改由 AI 管理后台配置，不属于安装必填项。内部 Token、管理密码和会话 Secret 仍只保存在本地 `.env`，安装器不会输出其值。
 
+## 客服实例配置层
+
+客服实例（Service Instance）是平台后续扩展多 AI、多消息入口、多外部平台连接和多知识库的基础抽象。每个实例使用通用字段独立描述实例身份、启用状态、AI 模型与系统提示词、知识来源、消息入口以及外部集成配置，不绑定任何品牌、域名、平台或模型。
+
+仓库内的 `config/services/services.yaml` 是空的默认配置，`config/services/services.example.yaml` 提供禁用状态的通用结构示例。实际配置写入 `config/services/local.yaml`；该文件已被 Git 忽略，并且必须使用 `0600` 或更严格的权限。加载优先级为用户配置覆盖默认配置，相同 `service.id` 的用户字段会覆盖默认字段，同时允许增加其他实例。
+
+`lib/services.sh` 提供配置加载、校验、实例 ID 列表、按 ID 获取完整配置和读取指定字段的接口。解析器拒绝密码、Token、API Key、私钥等敏感字段；外部凭据应使用 `credential_ref` 等引用，由未来的安全凭据层解析。当前安装流程只加载并验证实例配置，不创建运行服务，也不实现管理后台 UI、多租户、多平台连接、多域名或 AI 模型调用。
+
 备份版本保存在 `BACKUP_DIR`，目录和文件分别限制为仅所有者可访问。每个版本包含 Chatwoot PostgreSQL dump、Chatwoot storage、AI Service 与管理后台持久化数据、受保护的 `.env`、两套 Compose 文件、Nginx 站点配置、SSL 配置记录、版本 manifest 和 SHA-256 校验清单。证书私钥不会复制进备份；`.env` 含真实 Secret，因此备份目录仍应放在受控磁盘中。当前仅支持本地备份，不上传云存储，也不创建定时任务。
 
 升级目标由 `UPGRADE_CHATWOOT_VERSION`、`UPGRADE_AI_SERVICE_IMAGE` 和 `UPGRADE_AI_ADMIN_IMAGE` 明确指定。移动标签 `latest` 会被拒绝。升级器先验证当前安装和目标 Compose 模型，再创建完整备份和升级记录；随后拉取目标镜像、原子更新 `.env`、停止应用服务、执行 Chatwoot 数据库迁移、重建服务并运行健康检查。数据库迁移、服务重建或健康检查失败时，会自动恢复刚创建的升级前备份。PostgreSQL 和 Redis 镜像不会被升级模块隐式跨版本升级。
@@ -114,6 +122,9 @@ bash install.sh
 
 - Chatwoot 单实例生产部署；
 - 知识库与向量检索；
+- 多 AI 与独立模型配置；
+- 多消息入口和多知识库绑定；
+- 多外部客服平台连接；
 - 多客服渠道连接；
 - 多域名入口；
 - Cloudflare DNS API、DNS-01 自动验证与泛域名证书；

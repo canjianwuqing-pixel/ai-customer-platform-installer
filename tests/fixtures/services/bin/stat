@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+target_path="${!#}"
+if [[ -n "${SERVICES_FIXTURE_UNSAFE_FILE:-}" &&
+  "${target_path}" == "${SERVICES_FIXTURE_UNSAFE_FILE}" ]]; then
+  printf '%s\n' '644'
+else
+  printf '%s\n' '600'
+fi

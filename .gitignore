@@ -4,6 +4,8 @@
 !.env.example
 *.pem
 *.key
+/config/services/local.yaml
+/config/services/*.local.yaml
 
 # Installer runtime state and logs
 .installer-state
