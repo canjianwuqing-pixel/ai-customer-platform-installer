@@ -24,13 +24,13 @@
 
 ## 配置原则
 
-真实配置统一保存在本地 `.env` 文件中。先复制 `.env.example`，再填写部署环境自己的值：
+真实配置统一保存在本地 `.env` 文件中。先复制 `.env.example`，再填写部署环境自己的非敏感配置：
 
 ```bash
 cp .env.example .env
 ```
 
-不得向 Git 提交真实域名、邮箱、数据库密码、Redis 密码、密钥、证书或 Token。`.env`、PEM 和私钥文件已加入 `.gitignore`。
+`DATABASE_PASSWORD`、`REDIS_PASSWORD`、`SECRET_KEY_BASE`、`AI_SERVICE_INTERNAL_TOKEN` 和 `AI_ADMIN_SESSION_SECRET` 可以留空；安装器首次运行时会自动生成安全随机值，重复执行时保留已有值，并将 `.env` 权限限制为 `0600`。不得向 Git 提交真实域名、邮箱、数据库密码、Redis 密码、密钥、证书或 Token。`.env`、PEM 和私钥文件已加入 `.gitignore`。
 
 `DOMAIN` 是当前唯一部署域名；`LETSENCRYPT_EMAIL` 用于 Let's Encrypt 账户和证书通知，`EMAIL` 继续作为 Chatwoot 的业务发件地址。V1 固定使用 Let's Encrypt HTTP-01 验证，因此域名必须能通过公共 DNS 解析到部署入口，公网 TCP 80 端口必须可达。
 

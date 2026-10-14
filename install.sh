@@ -8,6 +8,7 @@ export INSTALLER_ROOT
 # logging, configuration, state, and validation interfaces.
 source "${INSTALLER_ROOT}/lib/common.sh"
 source "${INSTALLER_ROOT}/lib/config.sh"
+source "${INSTALLER_ROOT}/lib/secrets.sh"
 source "${INSTALLER_ROOT}/lib/state.sh"
 source "${INSTALLER_ROOT}/lib/validation.sh"
 
@@ -99,6 +100,7 @@ on_error() {
 }
 
 run_install_command() {
+  secrets_ensure
   validation_validate_base_config
   register_core_steps
   run_registered_steps
