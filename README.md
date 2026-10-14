@@ -13,6 +13,7 @@
 - 独立的 FastAPI AI Service 与 AI 管理后台 Docker Compose Stack；
 - AI 服务独立数据卷、环回地址默认绑定和敏感日志禁用约束；
 - Chatwoot Webhook、Secret 与 Inbox 集成参数预留；
+- 带版本、校验和、保留策略及显式恢复确认的本地备份与恢复；
 - Chatwoot 的 Nginx HTTP 反向代理与 WebSocket 支持；
 - 单域名 DNS 检测、Let's Encrypt 证书申请和 HTTPS 切换；
 - Certbot 自动续签、Nginx deploy hook 和续签 dry-run；
@@ -37,6 +38,8 @@ cp .env.example .env
 Chatwoot、pgvector/PostgreSQL 和 Redis 镜像均通过 `.env` 使用明确版本标签。PostgreSQL 与 Redis 不发布宿主机端口；Rails 默认只绑定到 `.env` 配置的本地地址，后续由 Nginx 模块接入。
 
 AI Service 和 AI 管理后台同样只接受带固定标签或 SHA-256 digest 的镜像引用。仓库不内置某个供应商镜像；部署镜像需要遵守 Compose 中声明的环境变量契约，并分别提供由 `AI_SERVICE_HTTP_CHECK_URL` 和 `AI_ADMIN_HTTP_CHECK_URL` 指向的 HTTP 健康端点。`OPENAI_API_KEY`、内部 Token、管理密码和会话 Secret 只保存在本地 `.env`，安装器不会输出其值。`AI_LOG_SENSITIVE_DATA` 必须保持为 `false`。
+
+备份版本保存在 `BACKUP_DIR`，目录和文件分别限制为仅所有者可访问。每个版本包含 Chatwoot PostgreSQL dump、Chatwoot storage、AI Service 与管理后台持久化数据、受保护的 `.env`、两套 Compose 文件、Nginx 站点配置、SSL 配置记录、版本 manifest 和 SHA-256 校验清单。证书私钥不会复制进备份；`.env` 含真实 Secret，因此备份目录仍应放在受控磁盘中。当前仅支持本地备份，不上传云存储，也不创建定时任务。
 
 ## 安装流程规划
 
@@ -69,6 +72,16 @@ bash install.sh
 
 首次部署前请确认域名已经解析且公网端口 80、443 可访问。默认会执行一次 `certbot renew --dry-run`；如需在受限测试环境暂时跳过，可设置 `CERTBOT_RENEW_DRY_RUN=false`，生产部署建议保持启用。
 
+手动创建备份、查看版本和恢复：
+
+```bash
+./backup.sh
+./restore.sh --list
+./restore.sh BACKUP_ID
+```
+
+恢复会要求输入 `RESTORE`，自动化环境必须显式传入 `--yes`。恢复开始前会校验 manifest、全部 SHA-256 和归档格式，然后停止配置指定的应用服务；成功恢复数据库、持久化数据与配置后才重新启动服务并执行 HTTP、PostgreSQL 和 Nginx 健康检查。
+
 ## 后续扩展方向
 
 - Chatwoot 单实例生产部署；
@@ -76,7 +89,7 @@ bash install.sh
 - 多客服渠道连接；
 - 多域名入口；
 - Cloudflare DNS API、DNS-01 自动验证与泛域名证书；
-- 备份与恢复；
+- 云备份、异地复制和自动调度；
 - 安装验证、升级和运维工具。
 
 多 AI、多客服实例、多平台、多租户、多域名和上述扩展能力不属于当前阶段。

@@ -134,8 +134,37 @@ validation_is_safe_container_path() {
   local value="$1"
 
   [[ "${value}" == /* ]] &&
+    [[ "${value}" != "/" ]] &&
     [[ "${value}" != *..* ]] &&
     [[ "${value}" =~ ^/[A-Za-z0-9._/-]+$ ]]
+}
+
+validation_is_safe_absolute_path() {
+  local value="$1"
+
+  [[ "${value}" == /* ]] &&
+    [[ "${value}" != "/" ]] &&
+    [[ "${value}" != *$'\n'* ]] &&
+    [[ "${value}" != *$'\r'* ]] &&
+    [[ ! "${value}" =~ (^|/)\.\.?(/|$) ]]
+}
+
+validation_is_compose_service_name() {
+  local value="$1"
+  [[ "${value}" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ ]]
+}
+
+validation_is_safe_service_list() {
+  local value="$1"
+  local service_name
+  local -a service_names=()
+
+  read -r -a service_names <<<"${value}"
+  ((${#service_names[@]} > 0)) || return 1
+
+  for service_name in "${service_names[@]}"; do
+    validation_is_compose_service_name "${service_name}" || return 1
+  done
 }
 
 validation_validate_base_config() {

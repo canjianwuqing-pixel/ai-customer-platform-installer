@@ -31,6 +31,10 @@ readonly -a MODULE_FILES=(
   "modules/domain/configure.sh"
   "modules/domain/ssl.sh"
   "modules/domain/verify.sh"
+  "modules/backup/check.sh"
+  "modules/backup/backup.sh"
+  "modules/backup/restore.sh"
+  "modules/backup/verify.sh"
 )
 
 for module_file in "${MODULE_FILES[@]}"; do
@@ -90,15 +94,70 @@ on_error() {
   exit "${exit_code}"
 }
 
+run_install_command() {
+  validation_validate_base_config
+  register_core_steps
+  run_registered_steps
+}
+
+run_backup_command() {
+  validation_validate_base_config
+  backup_check
+  backup_create
+}
+
+run_restore_command() {
+  local backup_id=""
+  local confirmed="false"
+
+  if [[ "${1:-}" == "--list" ]]; then
+    backup_initialize_config
+    backup_list_versions
+    return 0
+  fi
+
+  while (($# > 0)); do
+    case "$1" in
+      --yes) confirmed="true" ;;
+      --*) die "Unknown restore option: $1" ;;
+      *)
+        if [[ -n "${backup_id}" ]]; then
+          die "Restore accepts exactly one backup ID."
+        fi
+        backup_id="$1"
+        ;;
+    esac
+    shift
+  done
+
+  [[ -n "${backup_id}" ]] || die "A backup ID is required. Use ./restore.sh --list to view available backups."
+  validation_validate_base_config
+  backup_check
+  backup_restore "${backup_id}" "${confirmed}"
+}
+
 main() {
+  local command_name="${1:-install}"
+
   trap 'on_error "${LINENO}" "$?"' ERR
 
   log_info "AI customer platform installer started."
   config_load_optional "${CONFIG_FILE:-${INSTALLER_ROOT}/.env}"
-  validation_validate_base_config
 
-  register_core_steps
-  run_registered_steps
+  if (($# > 0)); then
+    shift
+  fi
+
+  case "${command_name}" in
+    install) run_install_command "$@" ;;
+    backup) run_backup_command "$@" ;;
+    restore) run_restore_command "$@" ;;
+    list-backups)
+      backup_initialize_config
+      backup_list_versions
+      ;;
+    *) die "Unknown command '${command_name}'. Expected install, backup, restore, or list-backups." ;;
+  esac
 
   log_ok "Installer workflow completed."
 }

@@ -31,19 +31,34 @@ case "${1:-}" in
 
     case "${1:-}" in
       ps)
-        if [[ "${compose_arguments}" == *"ai-customer-platform-ai-test"* ]]; then
+        if [[ "$*" == *"--quiet"* ]]; then
+          service_name="${!#}"
+          printf 'fixture-container-%s\n' "${service_name}"
+        elif [[ "${compose_arguments}" == *"ai-customer-platform-ai-test"* ]]; then
           printf '%s\n' ai-service ai-admin
         else
           printf '%s\n' postgres redis rails sidekiq
         fi
         ;;
-      config | pull | up | exec | run)
+      exec)
+        if [[ "$*" == *" pg_dump "* ]]; then
+          printf '%s\n' 'fixture-postgresql-custom-dump'
+        fi
+        ;;
+      config | pull | up | run | start | stop)
         ;;
       *)
         printf 'Unexpected fixture Docker Compose command: %s\n' "${1:-missing}" >&2
         exit 1
         ;;
     esac
+    ;;
+  run)
+    if [[ "$*" == *" -czf - ."* ]]; then
+      tar -czf - --files-from /dev/null
+    elif [[ "$*" == *" -cf - ."* ]]; then
+      tar -cf - --files-from /dev/null
+    fi
     ;;
   info | version)
     printf '%s\n' 'Docker daemon fixture'

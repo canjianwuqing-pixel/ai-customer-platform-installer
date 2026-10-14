@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+if [[ "${1:-}" == "-c" && "${2:-}" == "%a" ]]; then
+  printf '%s\n' '700'
+  exit 0
+fi
+
+printf 'Unexpected fixture stat command: %s\n' "$*" >&2
+exit 1
