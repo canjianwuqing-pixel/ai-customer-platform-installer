@@ -92,6 +92,7 @@ for key in \
   REDIS_PASSWORD \
   SECRET_KEY_BASE \
   AI_SERVICE_INTERNAL_TOKEN \
+  SERVICE_MANAGEMENT_TOKEN \
   AI_ADMIN_SESSION_SECRET; do
   value="$(read_config_value "${key}")"
   if [[ -z "${value}" ]]; then

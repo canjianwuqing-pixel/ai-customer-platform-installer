@@ -29,7 +29,7 @@
 
 安装器按 `config/default.env`、`config/images.env`、`.env` 的顺序加载配置，后加载的用户配置优先。`config/images.env` 提供 Chatwoot、PostgreSQL 和 Redis 的固定版本，禁止使用 `latest`；`config/default.env` 保存非敏感运行参数。高级用户可以在 `.env` 中覆盖版本和镜像设置。
 
-`DATABASE_PASSWORD`、`REDIS_PASSWORD`、`SECRET_KEY_BASE`、`AI_SERVICE_INTERNAL_TOKEN`、`AI_ADMIN_SESSION_SECRET` 和 `AI_ADMIN_PASSWORD` 可以留空；安装器首次运行时会自动生成安全随机值，重复执行时保留已有值，并将 `.env` 权限限制为 `0600`。启用 AI Service 时，管理员账号固定为 `admin`，初始密码只在该模块完整安装成功后显示一次。不得向 Git 提交真实域名、邮箱、数据库密码、Redis 密码、密钥、证书或 Token。`.env`、PEM 和私钥文件已加入 `.gitignore`。
+`DATABASE_PASSWORD`、`REDIS_PASSWORD`、`SECRET_KEY_BASE`、`AI_SERVICE_INTERNAL_TOKEN`、`AI_ADMIN_SESSION_SECRET`、`AI_ADMIN_PASSWORD` 和 `SERVICE_MANAGEMENT_TOKEN` 可以留空；安装器首次运行时会自动生成安全随机值，重复执行时保留已有值，并将 `.env` 权限限制为 `0600`。启用 AI Service 时，管理员账号固定为 `admin`，初始密码只在该模块完整安装成功后显示一次。不得向 Git 提交真实域名、邮箱、数据库密码、Redis 密码、密钥、证书或 Token。`.env`、PEM 和私钥文件已加入 `.gitignore`。
 
 `DOMAIN` 是当前唯一部署域名；`LETSENCRYPT_EMAIL` 用于 Let's Encrypt 账户和证书通知，`EMAIL` 继续作为 Chatwoot 的业务发件地址。V1 固定使用 Let's Encrypt HTTP-01 验证，因此域名必须能通过公共 DNS 解析到部署入口，公网 TCP 80 端口必须可达。
 
@@ -94,6 +94,49 @@ Runtime 每次请求独立加载默认配置和用户覆盖配置，不保存共
 python3 -m venv runtime/ai-runtime-venv
 runtime/ai-runtime-venv/bin/python -m pip install -r ai_runtime/requirements.txt
 AI_RUNTIME_TEST_PYTHON="$PWD/runtime/ai-runtime-venv/bin/python" bash tests/ai-runtime-fixture-test.sh
+```
+
+## Service Management API
+
+Service Management API 是未来统一 AI 客服管理后台的后端基础，已集成到仓库内的 FastAPI Runtime。启用 `AI_RUNTIME_BUILD=true` 后，管理接口与 `/chat` 使用同一服务端口，默认仅监听宿主机环回地址。它管理客服实例与域名映射，未来可供 Web 管理后台扩展多 AI、多渠道和多域名；当前提供后端 API，不创建前端页面，也不操作 DNS、SSL 或外部平台。
+
+所有 `/management/*` 接口要求 `Authorization: Bearer <SERVICE_MANAGEMENT_TOKEN>`。该 Token 由安装器自动生成，保存在权限为 `0600` 的本地 `.env` 中，且与聊天接口的 `AI_SERVICE_INTERNAL_TOKEN` 分开使用；聊天 Token 无权修改管理数据。升级已有部署时重新运行安装器可补齐缺失 Token，已有值会保留。直接运行 Runtime 时须通过环境变量提供至少 32 字符的管理 Token，缺失或过短时管理请求拒绝访问。
+
+| 对象 | 接口 | 用途 |
+| --- | --- | --- |
+| Service | `GET /management/services`、`POST /management/services` | 列表、创建 |
+| Service | `GET /management/services/{id}`、`PUT`、`PATCH`、`DELETE` 同一路径 | 查询、完整替换、局部修改、删除 |
+| Service | `POST /management/services/{id}/enable`、`/disable` | 启用、禁用 |
+| Domain | `GET /management/domains`、`POST /management/domains` | 列表、创建 |
+| Domain | `GET /management/domains/{domain}`、`PUT`、`PATCH`、`DELETE` 同一路径 | 查询、重新绑定或修改、删除 |
+| Domain | `POST /management/domains/{domain}/enable`、`/disable` | 启用、禁用 |
+
+Service 创建请求使用现有七个字段：`id`、`name`、`enabled`、`ai_config`、`prompt_config`、`knowledge_config`、`channel_config`。`id` 与 `name` 必填，`enabled` 默认 `false`，四个配置引用默认空。`PATCH` 只提交需修改字段，`PUT` 提交完整字段；ID 不可修改。启用的实例必须能加载引用的模型、提示词和知识文件，配置无效时拒绝提交并保留原配置；禁用实例可先保存未完成的引用。提供者凭据仍由环境变量提供，不要求通过管理 API 设置。
+
+Domain 创建请求使用 `domain`、`service_id`、`enabled`、`default_entry`，后两项默认 `false`。域名会统一为小写，拒绝 URL、通配符、IP 和无效标签。绑定的实例必须存在，启用域名只能指向启用实例，最多保留一个启用的默认入口。有域名引用的实例不能删除；有启用域名引用的实例不能禁用。禁用默认域名的专用接口会同时清除其 `default_entry` 标记。
+
+请求示例（使用管理 Token 调用对应接口）：
+
+```json
+{"id":"service_a","name":"Service A","enabled":false,"ai_config":"ai-a","prompt_config":"prompt-a","knowledge_config":"knowledge-a","channel_config":""}
+```
+
+```json
+{"domain":"entry.example.test","service_id":"service_a","enabled":false,"default_entry":false}
+```
+
+存储评估：静态 YAML 适合作为可审阅的初始配置，但 API 写入需要事务、并发控制以及删除记录。因此本阶段使用 Python 标准库 SQLite 保存 API 覆盖数据，保留两个原始 YAML 文件和本地覆盖文件不变。有效配置优先级为 **API SQLite 记录 > 本地 `local.yaml` > 默认 YAML**。API 修改会保存该条记录的完整有效值；未被 API 修改的记录继续读取 YAML，已被 API 修改的记录不会被后续 YAML 编辑覆盖。删除采用覆盖层删除标记，防止底层 YAML 记录重新出现。
+
+SQLite 默认位于 `AI_SERVICE_DATA_PATH/management/core.sqlite3`，使用现有 AI 数据卷持久化，并纳入该数据卷的备份恢复。可用 `SERVICE_MANAGEMENT_DATABASE` 指定容器内的其他绝对路径；自定义路径需自行确保持久化。数据库目录和文件在 Ubuntu 上分别要求 `0700`、`0600`，数据库文件已被 Git 忽略。配置目录仍是只读挂载，管理 API 不写入原 YAML。API 与 Runtime 使用同一覆盖层，成功修改后的下一次 `/chat` 请求即可读取新配置，无需重启。
+
+首次 API 写入会事务性地创建并迁移数据库结构，当前 schema 版本为 1。已有 YAML 无需强制导入即可继续使用；如需将当前有效 YAML 固定为 API 记录，可调用带管理认证的 `POST /management/migrations/import-yaml`，或在已配置环境的 Runtime 中运行 `python -m ai_runtime.management_migrate`。导入可重复执行，保留已有 API 修改与删除标记，不改写原文件。遇到不支持的较新 schema 版本时会拒绝读写，避免旧程序修改新数据库。
+
+创建成功返回 `201`，删除成功返回 `204`；非法输入返回 `422`，认证失败返回 `401`，重复记录或绑定冲突返回 `409`，存储或认证配置不可用返回 `503`。错误响应只包含稳定错误码，不回显请求体或数据库异常。接口只接受配置引用，不接收 API Key、密码或 Token 字段，也不记录完整配置。
+
+API 测试和 fixture 可直接使用上一节创建的 Python 环境：
+
+```bash
+AI_RUNTIME_TEST_PYTHON="$PWD/runtime/ai-runtime-venv/bin/python" bash tests/management-api-fixture-test.sh
 ```
 
 备份版本保存在 `BACKUP_DIR`，目录和文件分别限制为仅所有者可访问。每个版本包含 Chatwoot PostgreSQL dump、Chatwoot storage、AI Service 与管理后台持久化数据、受保护的 `.env`、两套 Compose 文件、Nginx 站点配置、SSL 配置记录、版本 manifest 和 SHA-256 校验清单。证书私钥不会复制进备份；`.env` 含真实 Secret，因此备份目录仍应放在受控磁盘中。当前仅支持本地备份，不上传云存储，也不创建定时任务。

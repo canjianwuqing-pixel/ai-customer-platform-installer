@@ -12,6 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from .config import RuntimeFailure, ServiceResolver
 from .engine import RuntimeEngine
+from .management_api import management_router
 
 
 class ChatRequest(BaseModel):
@@ -63,6 +64,7 @@ def create_app(engine: RuntimeEngine | None = None) -> FastAPI:
     async def chat(body: ChatRequest):
         return await engine.respond(body.message, body.service_id)
 
+    application.include_router(management_router(engine.resolver))
     return application
 
 

@@ -95,6 +95,23 @@ def _inside(root: Path, relative: str) -> Path:
     return resolved
 
 
+def validate_services(services: dict[str, dict]) -> None:
+    """Shared validation for YAML and API overrides; never accept credentials."""
+    for service_id, entry in services.items():
+        if not SERVICE_ID.fullmatch(service_id) or set(entry) != SERVICE_FIELDS:
+            raise RuntimeFailure("invalid_configuration")
+        if entry["id"] != service_id or len(_text(entry["name"])) > 128:
+            raise RuntimeFailure("invalid_configuration")
+        entry["enabled"] = _boolean(entry["enabled"])
+        for key in ("ai_config", "prompt_config", "knowledge_config", "channel_config"):
+            ref = _text(entry[key], allow_empty=True)
+            if ref and (
+                not REFERENCE.fullmatch(ref)
+                or any(part in {".", ".."} for part in ref.split("/"))
+            ):
+                raise RuntimeFailure("invalid_configuration_reference")
+
+
 @dataclass(frozen=True, repr=False)
 class RuntimeConfig:
     service_id: str
@@ -123,7 +140,7 @@ class ServiceResolver:
             os.environ,
         )
 
-    def _services(self) -> dict[str, dict]:
+    def _file_services(self) -> dict[str, dict]:
         services = {}
         default_file = Path(self.env.get(
             "SERVICE_INSTANCES_DEFAULT_FILE", str(self.config_dir / "services.yaml")
@@ -149,15 +166,15 @@ class ServiceResolver:
                     raise RuntimeFailure("invalid_configuration")
                 seen.add(service_id)
                 services[service_id] = {**services.get(service_id, {}), **entry}
-        for entry in services.values():
-            if set(entry) != SERVICE_FIELDS or len(_text(entry["name"])) > 128:
-                raise RuntimeFailure("invalid_configuration")
-            entry["enabled"] = _boolean(entry["enabled"])
-            for key in ("ai_config", "prompt_config", "knowledge_config", "channel_config"):
-                ref = _text(entry[key], allow_empty=True)
-                if ref and not REFERENCE.fullmatch(ref):
-                    raise RuntimeFailure("invalid_configuration_reference")
+        validate_services(services)
         return services
+
+    def _services(self) -> dict[str, dict]:
+        # The store is optional. With no database this is the original YAML
+        # flow, and a runtime read never creates or migrates a database.
+        from .management_store import ManagementStore
+
+        return ManagementStore(self).read_services()
 
     def _profile(self, kind: str, reference: str, allowed: set[str]) -> dict:
         if not reference:
@@ -187,12 +204,16 @@ class ServiceResolver:
         entry = services[selected]
         if not entry["enabled"]:
             raise RuntimeFailure("service_disabled", 409)
+        return self.runtime_for_instance(entry)
+
+    def runtime_for_instance(self, entry: dict) -> RuntimeConfig:
+        """Resolve a validated record, including a not-yet-committed API edit."""
         if not entry["ai_config"]:
             raise RuntimeFailure("ai_configuration_missing")
         ai = self._profile("ai", entry["ai_config"], {"model", "api_base_url", "api_key_env"})
         prompt = self._profile("prompts", entry["prompt_config"], {"system_prompt", "reply_rules"})
         knowledge = self._profile("knowledge", entry["knowledge_config"], {"source", "max_characters"})
-        return self._runtime_config(selected, ai, prompt, knowledge)
+        return self._runtime_config(entry["id"], ai, prompt, knowledge)
 
     def _runtime_config(self, service_id, ai, prompt, knowledge, *, legacy=False):
         model = _text(self.env.get("AI_MODEL", "") if legacy else ai.get("model"))

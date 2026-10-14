@@ -16,6 +16,8 @@
 !/config/services/knowledge/*.example.yaml
 __pycache__/
 *.pyc
+*.sqlite3
+*.sqlite3-*
 
 # Installer runtime state and logs
 .installer-state

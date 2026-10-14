@@ -52,6 +52,7 @@ printf '%s\n' \
   'SECRET_KEY_BASE=' \
   'AI_SERVICE_INTERNAL_TOKEN=' \
   'AI_ADMIN_SESSION_SECRET=' \
+  'SERVICE_MANAGEMENT_TOKEN=' \
   'AI_ADMIN_PASSWORD=' >"${EMPTY_CONFIG}"
 
 config_load_optional "${EMPTY_CONFIG}"
@@ -62,6 +63,7 @@ assert_hex_length REDIS_PASSWORD 64
 assert_hex_length SECRET_KEY_BASE 128
 assert_hex_length AI_SERVICE_INTERNAL_TOKEN 64
 assert_hex_length AI_ADMIN_SESSION_SECRET 64
+assert_hex_length SERVICE_MANAGEMENT_TOKEN 64
 assert_hex_length AI_ADMIN_PASSWORD 32
 
 if [[ "${AI_ADMIN_PASSWORD_GENERATED}" != "true" ]]; then
@@ -110,6 +112,7 @@ readonly EXISTING_SECRET_KEY_BASE='existing-secret-key-base-value'
 readonly EXISTING_INTERNAL_TOKEN='existing-internal-token'
 readonly EXISTING_SESSION_SECRET='existing-session-secret'
 readonly EXISTING_ADMIN_PASSWORD='existing-admin-password'
+readonly EXISTING_MANAGEMENT_TOKEN='existing-management-token'
 
 printf '%s\n' \
   "DATABASE_PASSWORD=${EXISTING_DATABASE_PASSWORD}" \
@@ -117,6 +120,7 @@ printf '%s\n' \
   "SECRET_KEY_BASE=${EXISTING_SECRET_KEY_BASE}" \
   "AI_SERVICE_INTERNAL_TOKEN=${EXISTING_INTERNAL_TOKEN}" \
   "AI_ADMIN_SESSION_SECRET=${EXISTING_SESSION_SECRET}" \
+  "SERVICE_MANAGEMENT_TOKEN=${EXISTING_MANAGEMENT_TOKEN}" \
   "AI_ADMIN_PASSWORD=${EXISTING_ADMIN_PASSWORD}" >"${EXISTING_CONFIG}"
 readonly EXISTING_CHECKSUM="$(sha256sum "${EXISTING_CONFIG}" | awk '{print $1}')"
 
@@ -128,6 +132,7 @@ if [[ "${DATABASE_PASSWORD}" != "${EXISTING_DATABASE_PASSWORD}" ||
   "${SECRET_KEY_BASE}" != "${EXISTING_SECRET_KEY_BASE}" ||
   "${AI_SERVICE_INTERNAL_TOKEN}" != "${EXISTING_INTERNAL_TOKEN}" ||
   "${AI_ADMIN_SESSION_SECRET}" != "${EXISTING_SESSION_SECRET}" ||
+  "${SERVICE_MANAGEMENT_TOKEN}" != "${EXISTING_MANAGEMENT_TOKEN}" ||
   "${AI_ADMIN_PASSWORD}" != "${EXISTING_ADMIN_PASSWORD}" ]]; then
   printf '%s\n' 'An existing secret was overwritten.' >&2
   exit 1
@@ -149,6 +154,7 @@ for existing_value in \
   "${EXISTING_SECRET_KEY_BASE}" \
   "${EXISTING_INTERNAL_TOKEN}" \
   "${EXISTING_SESSION_SECRET}" \
+  "${EXISTING_MANAGEMENT_TOKEN}" \
   "${EXISTING_ADMIN_PASSWORD}"; do
   if grep -Fq -- "${existing_value}" "${EXISTING_LOG}"; then
     printf '%s\n' 'An existing secret was exposed in installer output.' >&2

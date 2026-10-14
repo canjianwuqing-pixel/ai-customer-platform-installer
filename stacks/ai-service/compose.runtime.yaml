@@ -8,6 +8,9 @@ services:
         PYTHON_IMAGE: "${AI_RUNTIME_PYTHON_IMAGE:?AI_RUNTIME_PYTHON_IMAGE is required}"
     environment:
       AI_RUNTIME_CONFIG_PATH: /app/config/services
+      AI_RUNTIME_DOMAINS_PATH: /app/config/domains
+      SERVICE_MANAGEMENT_TOKEN: "${SERVICE_MANAGEMENT_TOKEN:-}"
+      SERVICE_MANAGEMENT_DATABASE: "${SERVICE_MANAGEMENT_DATABASE:-}"
       AI_DEFAULT_SERVICE_ID: "${AI_DEFAULT_SERVICE_ID:-}"
       AI_API_BASE_URL: "${AI_API_BASE_URL:-}"
       AI_SYSTEM_PROMPT: "${AI_SYSTEM_PROMPT:-}"
@@ -22,6 +25,12 @@ services:
       - type: bind
         source: "${AI_RUNTIME_CONFIG_DIR:-../../config/services}"
         target: /app/config/services
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: "${AI_RUNTIME_DOMAINS_DIR:-../../config/domains}"
+        target: /app/config/domains
         read_only: true
         bind:
           create_host_path: false
