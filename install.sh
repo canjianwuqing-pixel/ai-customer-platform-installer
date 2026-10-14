@@ -11,6 +11,7 @@ source "${INSTALLER_ROOT}/lib/config.sh"
 source "${INSTALLER_ROOT}/lib/secrets.sh"
 source "${INSTALLER_ROOT}/lib/state.sh"
 source "${INSTALLER_ROOT}/lib/validation.sh"
+source "${INSTALLER_ROOT}/lib/setup.sh"
 
 readonly -a MODULE_FILES=(
   "modules/system/check.sh"
@@ -100,7 +101,9 @@ on_error() {
 }
 
 run_install_command() {
+  setup_prepare_configuration
   secrets_ensure
+  setup_mark_admin_password_pending
   validation_validate_base_config
   register_core_steps
   run_registered_steps
@@ -196,7 +199,10 @@ main() {
   trap 'on_error "${LINENO}" "$?"' ERR
 
   log_info "AI customer platform installer started."
-  config_load_optional "${CONFIG_FILE:-${INSTALLER_ROOT}/.env}"
+
+  if [[ "${command_name}" != "install" ]]; then
+    config_load_optional "${CONFIG_FILE:-${INSTALLER_ROOT}/.env}"
+  fi
 
   if (($# > 0)); then
     shift
@@ -217,6 +223,9 @@ main() {
   esac
 
   log_ok "Installer workflow completed."
+  if [[ "${command_name}" == "install" ]]; then
+    setup_print_completion
+  fi
 }
 
 main "$@"

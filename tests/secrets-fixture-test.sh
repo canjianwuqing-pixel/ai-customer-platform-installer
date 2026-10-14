@@ -51,7 +51,8 @@ printf '%s\n' \
   'REDIS_PASSWORD=' \
   'SECRET_KEY_BASE=' \
   'AI_SERVICE_INTERNAL_TOKEN=' \
-  'AI_ADMIN_SESSION_SECRET=' >"${EMPTY_CONFIG}"
+  'AI_ADMIN_SESSION_SECRET=' \
+  'AI_ADMIN_PASSWORD=' >"${EMPTY_CONFIG}"
 
 config_load_optional "${EMPTY_CONFIG}"
 secrets_ensure >"${FIRST_LOG}" 2>&1
@@ -61,6 +62,12 @@ assert_hex_length REDIS_PASSWORD 64
 assert_hex_length SECRET_KEY_BASE 128
 assert_hex_length AI_SERVICE_INTERNAL_TOKEN 64
 assert_hex_length AI_ADMIN_SESSION_SECRET 64
+assert_hex_length AI_ADMIN_PASSWORD 32
+
+if [[ "${AI_ADMIN_PASSWORD_GENERATED}" != "true" ]]; then
+  printf '%s\n' 'Administrator password generation was not recorded.' >&2
+  exit 1
+fi
 
 if ! grep -Fq -- "600 ${EMPTY_CONFIG}" "${CHMOD_CALL_LOG}"; then
   printf '%s\n' 'Secret generation did not request 0600 permissions for .env.' >&2
@@ -85,6 +92,11 @@ config_load_optional "${EMPTY_CONFIG}" >/dev/null
 secrets_ensure >"${SECOND_LOG}" 2>&1
 readonly SECOND_CHECKSUM="$(sha256sum "${EMPTY_CONFIG}" | awk '{print $1}')"
 
+if [[ "${AI_ADMIN_PASSWORD_GENERATED}" != "false" ]]; then
+  printf '%s\n' 'A repeated run incorrectly marked the administrator password as new.' >&2
+  exit 1
+fi
+
 if [[ "${FIRST_CHECKSUM}" != "${SECOND_CHECKSUM}" ]]; then
   printf '%s\n' 'Repeated secret generation changed an already populated configuration.' >&2
   exit 1
@@ -97,13 +109,15 @@ readonly EXISTING_REDIS_PASSWORD='existing-redis-password'
 readonly EXISTING_SECRET_KEY_BASE='existing-secret-key-base-value'
 readonly EXISTING_INTERNAL_TOKEN='existing-internal-token'
 readonly EXISTING_SESSION_SECRET='existing-session-secret'
+readonly EXISTING_ADMIN_PASSWORD='existing-admin-password'
 
 printf '%s\n' \
   "DATABASE_PASSWORD=${EXISTING_DATABASE_PASSWORD}" \
   "REDIS_PASSWORD=${EXISTING_REDIS_PASSWORD}" \
   "SECRET_KEY_BASE=${EXISTING_SECRET_KEY_BASE}" \
   "AI_SERVICE_INTERNAL_TOKEN=${EXISTING_INTERNAL_TOKEN}" \
-  "AI_ADMIN_SESSION_SECRET=${EXISTING_SESSION_SECRET}" >"${EXISTING_CONFIG}"
+  "AI_ADMIN_SESSION_SECRET=${EXISTING_SESSION_SECRET}" \
+  "AI_ADMIN_PASSWORD=${EXISTING_ADMIN_PASSWORD}" >"${EXISTING_CONFIG}"
 readonly EXISTING_CHECKSUM="$(sha256sum "${EXISTING_CONFIG}" | awk '{print $1}')"
 
 config_load_optional "${EXISTING_CONFIG}" >/dev/null
@@ -113,7 +127,8 @@ if [[ "${DATABASE_PASSWORD}" != "${EXISTING_DATABASE_PASSWORD}" ||
   "${REDIS_PASSWORD}" != "${EXISTING_REDIS_PASSWORD}" ||
   "${SECRET_KEY_BASE}" != "${EXISTING_SECRET_KEY_BASE}" ||
   "${AI_SERVICE_INTERNAL_TOKEN}" != "${EXISTING_INTERNAL_TOKEN}" ||
-  "${AI_ADMIN_SESSION_SECRET}" != "${EXISTING_SESSION_SECRET}" ]]; then
+  "${AI_ADMIN_SESSION_SECRET}" != "${EXISTING_SESSION_SECRET}" ||
+  "${AI_ADMIN_PASSWORD}" != "${EXISTING_ADMIN_PASSWORD}" ]]; then
   printf '%s\n' 'An existing secret was overwritten.' >&2
   exit 1
 fi
@@ -133,7 +148,8 @@ for existing_value in \
   "${EXISTING_REDIS_PASSWORD}" \
   "${EXISTING_SECRET_KEY_BASE}" \
   "${EXISTING_INTERNAL_TOKEN}" \
-  "${EXISTING_SESSION_SECRET}"; do
+  "${EXISTING_SESSION_SECRET}" \
+  "${EXISTING_ADMIN_PASSWORD}"; do
   if grep -Fq -- "${existing_value}" "${EXISTING_LOG}"; then
     printf '%s\n' 'An existing secret was exposed in installer output.' >&2
     exit 1

@@ -7,11 +7,13 @@ readonly -a INSTALLER_SECRET_KEYS=(
   SECRET_KEY_BASE
   AI_SERVICE_INTERNAL_TOKEN
   AI_ADMIN_SESSION_SECRET
+  AI_ADMIN_PASSWORD
 )
 
 declare -A INSTALLER_SECRET_KEY_COUNTS=()
 declare -A INSTALLER_GENERATED_SECRETS=()
 SECRETS_GENERATED_VALUE=""
+AI_ADMIN_PASSWORD_GENERATED="false"
 
 secrets_is_managed_key() {
   local candidate="$1"
@@ -34,6 +36,7 @@ secrets_required_bytes() {
     DATABASE_PASSWORD | REDIS_PASSWORD | AI_SERVICE_INTERNAL_TOKEN | AI_ADMIN_SESSION_SECRET)
       printf '%s\n' '32'
       ;;
+    AI_ADMIN_PASSWORD) printf '%s\n' '16' ;;
     *) return 1 ;;
   esac
 }
@@ -175,6 +178,7 @@ secrets_ensure() {
 
   secrets_validate_config_file || return 1
   INSTALLER_GENERATED_SECRETS=()
+  AI_ADMIN_PASSWORD_GENERATED="false"
 
   for key in "${INSTALLER_SECRET_KEYS[@]}"; do
     if ((INSTALLER_SECRET_KEY_COUNTS["${key}"] == 1)) && [[ -n "${!key:-}" ]]; then
@@ -189,6 +193,9 @@ secrets_ensure() {
     INSTALLER_GENERATED_SECRETS["${key}"]="${SECRETS_GENERATED_VALUE}"
     printf -v "${key}" '%s' "${SECRETS_GENERATED_VALUE}"
     export "${key}"
+    if [[ "${key}" == "AI_ADMIN_PASSWORD" ]]; then
+      AI_ADMIN_PASSWORD_GENERATED="true"
+    fi
     generated_count=$((generated_count + 1))
   done
 

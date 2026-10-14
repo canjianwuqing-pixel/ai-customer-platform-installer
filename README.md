@@ -24,13 +24,9 @@
 
 ## 配置原则
 
-真实配置统一保存在本地 `.env` 文件中。先复制 `.env.example`，再填写部署环境自己的非敏感配置：
+真实配置统一保存在本地 `.env` 文件中。首次执行 `bash install.sh` 时，安装向导会自动从 `.env.example` 创建权限为 `0600` 的 `.env`，并询问域名和管理员邮箱，不需要手动创建或编辑配置文件。AI Service 镜像、管理后台镜像、OpenAI API Key 或模型名称尚未预配置时，向导也会安全地询问并保存这些必要值；API Key 不回显且不会写入日志。
 
-```bash
-cp .env.example .env
-```
-
-`DATABASE_PASSWORD`、`REDIS_PASSWORD`、`SECRET_KEY_BASE`、`AI_SERVICE_INTERNAL_TOKEN` 和 `AI_ADMIN_SESSION_SECRET` 可以留空；安装器首次运行时会自动生成安全随机值，重复执行时保留已有值，并将 `.env` 权限限制为 `0600`。不得向 Git 提交真实域名、邮箱、数据库密码、Redis 密码、密钥、证书或 Token。`.env`、PEM 和私钥文件已加入 `.gitignore`。
+`DATABASE_PASSWORD`、`REDIS_PASSWORD`、`SECRET_KEY_BASE`、`AI_SERVICE_INTERNAL_TOKEN`、`AI_ADMIN_SESSION_SECRET` 和 `AI_ADMIN_PASSWORD` 可以留空；安装器首次运行时会自动生成安全随机值，重复执行时保留已有值，并将 `.env` 权限限制为 `0600`。新安装的 AI 管理员账号固定为 `admin`，初始密码只在完整安装成功后显示一次。不得向 Git 提交真实域名、邮箱、数据库密码、Redis 密码、密钥、证书或 Token。`.env`、PEM 和私钥文件已加入 `.gitignore`。
 
 `DOMAIN` 是当前唯一部署域名；`LETSENCRYPT_EMAIL` 用于 Let's Encrypt 账户和证书通知，`EMAIL` 继续作为 Chatwoot 的业务发件地址。V1 固定使用 Let's Encrypt HTTP-01 验证，因此域名必须能通过公共 DNS 解析到部署入口，公网 TCP 80 端口必须可达。
 
@@ -46,31 +42,32 @@ AI Service 和 AI 管理后台同样只接受带固定标签或 SHA-256 digest �
 
 ## 安装流程规划
 
-后续完整安装器将按照以下顺序执行：
+安装器按照以下顺序执行：
 
-1. 加载并校验配置；
-2. 检查 Ubuntu 版本、权限和服务器资源；
-3. 检查或安装 Docker 与 Docker Compose；
-4. 配置并启动 PostgreSQL、Redis、Chatwoot 和 Sidekiq；
-5. 配置并启动 FastAPI AI Service 和 AI 管理后台；
-6. 验证 AI 容器状态和两个 HTTP 健康端点；
-7. 配置 Nginx 反向代理及 WebSocket；
-8. 检查域名解析与 Nginx HTTP-01 前置条件；
-9. 申请 Let's Encrypt 证书并切换 HTTPS；
-10. 安装续签 deploy hook、启用 Certbot timer 并执行 dry-run；
-11. 执行服务健康检查并输出部署结果。
+1. 创建或加载 `.env`，交互收集缺失的非敏感配置；
+2. 自动生成缺失的 Secret 和管理员初始密码；
+3. 检查 Ubuntu 版本、权限和服务器资源；
+4. 检查或安装 Docker 与 Docker Compose；
+5. 配置并启动 PostgreSQL、Redis、Chatwoot 和 Sidekiq；
+6. 配置并启动 FastAPI AI Service 和 AI 管理后台；
+7. 验证 AI 容器状态和两个 HTTP 健康端点；
+8. 配置 Nginx 反向代理及 WebSocket；
+9. 检查域名解析与 Nginx HTTP-01 前置条件；
+10. 申请 Let's Encrypt 证书并切换 HTTPS；
+11. 安装续签 deploy hook、启用 Certbot timer 并执行 dry-run；
+12. 执行健康检查，输出访问地址，并一次性显示管理员初始密码。
 
 入口脚本通过注册步骤调用各个模块。模块之间不直接依赖，只通过 `lib/` 中的公共接口共享日志、配置、状态和校验能力，为重复执行和断点恢复预留基础。
 
 ## 当前运行方式
 
-填写 `.env` 后运行统一入口：
+直接运行统一入口：
 
 ```bash
 bash install.sh
 ```
 
-该命令会执行只读系统检测，在 Docker 环境缺失时进入 Docker 官方安装流程，部署 Chatwoot 与 AI Service Stack，安装 Nginx，并为 `.env` 中的单个域名申请证书和启用 HTTPS。证书续签由 Certbot systemd timer 执行，续签成功后的 deploy hook 会先运行 `nginx -t`，再 reload Nginx。
+安装向导会创建 `.env`、收集缺失配置并生成 Secret；随后执行只读系统检测，在 Docker 环境缺失时进入 Docker 官方安装流程，部署 Chatwoot 与 AI Service Stack，安装 Nginx，并为单个域名申请证书和启用 HTTPS。证书续签由 Certbot systemd timer 执行，续签成功后的 deploy hook 会先运行 `nginx -t`，再 reload Nginx。
 系统检测只支持 Ubuntu 22.04 和 24.04；在其他操作系统上运行会输出检测错误并安全退出。
 
 首次部署前请确认域名已经解析且公网端口 80、443 可访问。默认会执行一次 `certbot renew --dry-run`；如需在受限测试环境暂时跳过，可设置 `CERTBOT_RENEW_DRY_RUN=false`，生产部署建议保持启用。
