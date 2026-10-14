@@ -12,7 +12,7 @@ import stat
 from .config import RuntimeFailure, _boolean, _load_yaml, _text, validate_services
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 MIGRATIONS = {
     1: (
         """CREATE TABLE management_records (
@@ -23,6 +23,9 @@ MIGRATIONS = {
             PRIMARY KEY (kind, key)
         )""",
     ),
+    2: ("""CREATE TABLE runtime_profiles (
+        kind TEXT NOT NULL, key TEXT NOT NULL, config TEXT NOT NULL,
+        PRIMARY KEY (kind, key))""",),
 }
 DOMAIN_FIELDS = {"domain", "service_id", "enabled", "default_entry"}
 DNS_LABEL = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\Z")
@@ -114,7 +117,7 @@ class ManagementStore:
             return True
         # A first writer can be initializing a new database. Its uncommitted
         # migration is invisible to readers, which can still use base YAML.
-        return version == SCHEMA_VERSION
+        return version >= 1
 
     @contextmanager
     def _connection(self, *, write=False):
@@ -198,9 +201,93 @@ class ManagementStore:
             validate_services(services)
             return services
 
+    def runtime_state(self):
+        # One SQLite snapshot for a request's service and all its profiles.
+        with self._connection() as connection:
+            services = self._apply(connection, "service", self.resolver._file_services())
+            validate_services(services)
+            return services, self._profiles(connection)
+
     def read_state(self):
         with self._connection() as connection:
             return self._state(connection)
+
+    def _profiles(self, connection):
+        if connection is None or connection.execute("PRAGMA user_version").fetchone()[0] < 2:
+            return {}
+        return {(kind, key): json.loads(text) for kind, key, text in connection.execute(
+            "SELECT kind, key, config FROM runtime_profiles")}
+
+    def profile_overrides(self):
+        with self._connection() as connection:
+            return self._profiles(connection)
+
+    def get_profile(self, kind, key):
+        from .profile_api import MODELS
+        from .config import _inside
+        if kind not in MODELS:
+            raise RuntimeFailure("invalid_profile_kind", 422)
+        # Validate path even when the record comes from SQLite.
+        _inside(self.resolver.config_dir / kind, key + ".yaml")
+        overrides = self.profile_overrides()
+        if (kind, key) in overrides:
+            return overrides[(kind, key)]
+        if kind == "runtime":
+            if key != "default":
+                raise RuntimeFailure("record_not_found", 404)
+            return {"default_service_id": self.resolver.env.get("AI_DEFAULT_SERVICE_ID", "")}
+        path = _inside(self.resolver.config_dir / kind, key + ".yaml")
+        if not path.is_file() or key.endswith(".example"):
+            raise RuntimeFailure("record_not_found", 404)
+        record = _load_yaml(path)
+        if not set(record) <= set(MODELS[kind].model_fields):
+            raise RuntimeFailure("invalid_profile_configuration", 422)
+        return record
+
+    def list_profiles(self, kind):
+        keys = {key for record_kind, key in self.profile_overrides() if record_kind == kind}
+        if kind == "runtime":
+            keys.add("default")
+        else:
+            root = self.resolver.config_dir / kind
+            if root.is_dir():
+                keys.update(str(path.relative_to(root).with_suffix("")).replace("\\", "/")
+                            for path in root.rglob("*.yaml") if not path.name.endswith(".example.yaml"))
+        return [{"id": key, **self.get_profile(kind, key)} for key in sorted(keys)]
+
+    def save_profile(self, kind, key, body, *, create=False):
+        from .profile_api import validate_profile
+        record = validate_profile(self.resolver, kind, key, body)
+        with self._connection(write=True) as connection:
+            profiles = self._profiles(connection)
+            path = self.resolver.config_dir / kind / (key + ".yaml")
+            exists = (kind, key) in profiles or path.is_file() or (kind == "runtime" and key == "default")
+            if create and exists:
+                raise RuntimeFailure("record_already_exists", 409)
+            if not create and not exists:
+                raise RuntimeFailure("record_not_found", 404)
+            profiles[(kind, key)] = record
+            services, _ = self._state(connection)
+            if kind == "runtime" and record["default_service_id"]:
+                selected = services.get(record["default_service_id"])
+                if not selected or not selected["enabled"]:
+                    raise RuntimeFailure("invalid_default_service", 422)
+            # Reject updates that would invalidate any currently enabled service.
+            for entry in services.values():
+                if entry["enabled"]:
+                    self._check_runtime(entry, profiles)
+            connection.execute("INSERT INTO runtime_profiles VALUES (?, ?, ?) ON CONFLICT(kind,key) DO UPDATE SET config=excluded.config",
+                               (kind, key, json.dumps(record, ensure_ascii=False)))
+        return {"id": key, **record}
+
+    def _check_runtime(self, record, profiles):
+        try:
+            config = self.resolver.runtime_for_instance(record, profiles=profiles)
+            if config.knowledge_source is not None:
+                with config.knowledge_source.open(encoding="utf-8") as stream:
+                    stream.read(config.knowledge_max_characters)
+        except (RuntimeFailure, OSError, UnicodeError):
+            raise RuntimeFailure("invalid_runtime_configuration", 422) from None
 
     @staticmethod
     def _save(connection, kind, key, record, *, deleted=False):
@@ -230,14 +317,12 @@ class ManagementStore:
                 collection[key] = record
             validate_services(services)
             validate_domains(domains, services)
+            profiles = self._profiles(connection)
+            default = profiles.get(("runtime", "default"), {}).get("default_service_id", "")
+            if default and (default not in services or not services[default]["enabled"]):
+                raise RuntimeFailure("default_service_must_remain_enabled", 409)
             if kind == "service" and action != "delete" and record["enabled"]:
-                try:
-                    config = self.resolver.runtime_for_instance(record)
-                    if config.knowledge_source is not None:
-                        with config.knowledge_source.open(encoding="utf-8") as stream:
-                            stream.read(config.knowledge_max_characters)
-                except (RuntimeFailure, OSError, UnicodeError):
-                    raise RuntimeFailure("invalid_runtime_configuration", 422) from None
+                self._check_runtime(record, profiles)
             self._save(connection, kind, key, record, deleted=action == "delete")
             return record
 

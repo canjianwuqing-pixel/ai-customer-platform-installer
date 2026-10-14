@@ -24,7 +24,8 @@ cleanup() {
 trap cleanup EXIT
 
 export PATH="${TEST_ROOT}/tests/fixtures/docker-ready/bin:${PATH}"
-export CONFIG_FILE="${TEST_ROOT}/tests/fixtures/chatwoot.test.env"
+export CONFIG_FILE="${TEST_TEMP_ROOT}/.env"
+cp -- "${TEST_ROOT}/tests/fixtures/chatwoot.test.env" "${CONFIG_FILE}"
 export DOCKER_FIXTURE_LOG="${DOCKER_CALL_LOG}"
 export NGINX_CONFIG_ROOT="${TEST_TEMP_ROOT}/nginx"
 export NGINX_FIXTURE_LOG="${NGINX_CALL_LOG}"

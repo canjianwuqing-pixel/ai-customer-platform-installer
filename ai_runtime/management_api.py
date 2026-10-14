@@ -105,6 +105,8 @@ def management_router(resolver) -> APIRouter:
             raise RuntimeFailure("unauthorized", 401)
 
     router = APIRouter(prefix="/management", dependencies=[Depends(authenticate)])
+    from .profile_api import profile_router
+    router.include_router(profile_router(resolver))
 
     def domain_key(domain):
         domain = domain.lower()

@@ -142,6 +142,7 @@ domain_render_https_template() {
     return 1
   fi
 
+  nginx_render_admin_location "${output_file}" || return 1
   if grep -Eq '{{[A-Z0-9_]+}}' "${output_file}"; then
     log_error "Rendered HTTPS Nginx configuration contains unresolved template variables."
     return 1

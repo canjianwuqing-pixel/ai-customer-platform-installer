@@ -10,3 +10,7 @@ tests/fixtures/os-release.* text eol=lf
 tests/fixtures/docker-ready/bin/* text eol=lf
 templates/nginx/* text eol=lf
 templates/domain/* text eol=lf
+stacks/admin/Dockerfile text eol=lf
+platform_admin/requirements.txt text eol=lf
+platform_admin/templates/* text eol=lf
+templates/admin/* text eol=lf

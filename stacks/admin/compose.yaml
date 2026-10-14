@@ -1,0 +1,37 @@
+# Overlay: the existing ai-admin service is replaced, NOT duplicated. Keeping
+# its internal service/volume identity preserves manage/backup/upgrade contracts.
+services:
+  ai-admin:
+    build:
+      context: ../..
+      dockerfile: stacks/admin/Dockerfile
+      args:
+        PYTHON_IMAGE: "${ADMIN_PYTHON_IMAGE:?ADMIN_PYTHON_IMAGE is required}"
+    environment: !override
+      ADMIN_USERNAME: "${ADMIN_USERNAME:?ADMIN_USERNAME is required}"
+      ADMIN_PASSWORD_HASH: "${ADMIN_PASSWORD_HASH:?ADMIN_PASSWORD_HASH is required}"
+      ADMIN_SESSION_SECRET: "${ADMIN_SESSION_SECRET:?ADMIN_SESSION_SECRET is required}"
+      ADMIN_SESSION_TTL_SECONDS: "${ADMIN_SESSION_TTL_SECONDS:?ADMIN_SESSION_TTL_SECONDS is required}"
+      ADMIN_COOKIE_SECURE: "true"
+      ADMIN_DATA_PATH: "${AI_ADMIN_DATA_PATH:?AI_ADMIN_DATA_PATH is required}"
+      AI_ADMIN_CONTAINER_PORT: "${AI_ADMIN_CONTAINER_PORT:?AI_ADMIN_CONTAINER_PORT is required}"
+      ADMIN_API_URL: "${ADMIN_API_URL:?ADMIN_API_URL is required}"
+      SERVICE_MANAGEMENT_TOKEN: "${SERVICE_MANAGEMENT_TOKEN:?SERVICE_MANAGEMENT_TOKEN is required}"
+      ADMIN_MAINTENANCE_TOKEN: "${ADMIN_MAINTENANCE_TOKEN:?ADMIN_MAINTENANCE_TOKEN is required}"
+      ADMIN_MAINTENANCE_SOCKET: /run/platform-maintenance/worker.sock
+    volumes:
+      - type: bind
+        source: "${ADMIN_MAINTENANCE_SOCKET_DIR:?ADMIN_MAINTENANCE_SOCKET_DIR is required}"
+        target: /run/platform-maintenance
+        read_only: true
+        bind:
+          create_host_path: false
+    read_only: true
+    tmpfs:
+      - /tmp
+    healthcheck:
+      test: [CMD, python, -c, "import os,urllib.request; urllib.request.urlopen('http://localhost:'+os.environ['AI_ADMIN_CONTAINER_PORT']+'/health',timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s

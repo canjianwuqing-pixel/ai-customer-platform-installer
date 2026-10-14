@@ -1,0 +1,12 @@
+{% extends "base.html" %}{% block content %}
+<h2>{{ kind }} 配置</h2>
+{% if kind != 'runtime' %}<p><a href="/admin/edit/{{ kind }}/_new">创建配置</a></p>{% endif %}
+<table><thead><tr><th>标识</th><th>名称 / 状态</th><th>操作</th></tr></thead><tbody>
+{% for record in records %}
+{% set key = record.domain if kind == 'domains' else record.id %}
+<tr><td>{{ key }}</td><td>{{ record.name | default('') }} {% if 'enabled' in record %}{{ '已启用' if record.enabled else '已禁用' }}{% endif %}</td><td>
+<a href="/admin/edit/{{ kind }}/{{ key }}">编辑</a>
+{% if kind in ['services', 'domains'] %}<form method="post" action="/admin/toggle/{{ kind }}/{{ key }}"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="enabled" value="{{ 'false' if record.enabled else 'true' }}"><button>{{ '禁用' if record.enabled else '启用' }}</button></form>{% endif %}
+</td></tr>
+{% else %}<tr><td colspan="3">暂无配置。</td></tr>{% endfor %}</tbody></table>
+{% endblock %}

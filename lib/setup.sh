@@ -119,6 +119,20 @@ setup_prepare_configuration() {
 setup_configure_optional_modules() {
   AI_SERVICE_ENABLED="false"
 
+  validation_is_boolean "${ADMIN_ENABLED:-false}" || { log_error "ADMIN_ENABLED must be true or false."; return 1; }
+  if [[ "${ADMIN_ENABLED:-false}" == true ]]; then
+    if [[ -z "${AI_SERVICE_IMAGE:-}" ]]; then
+      AI_SERVICE_IMAGE="${ADMIN_RUNTIME_IMAGE}"
+      AI_RUNTIME_BUILD=true
+    fi
+    AI_ADMIN_IMAGE="${AI_ADMIN_IMAGE:-${ADMIN_DEFAULT_IMAGE}}"
+    if [[ -z "${ADMIN_API_URL:-}" ]]; then
+      ADMIN_API_URL="http://ai-service:${AI_SERVICE_CONTAINER_PORT}"
+    fi
+    export AI_SERVICE_IMAGE AI_RUNTIME_BUILD AI_ADMIN_IMAGE ADMIN_API_URL
+    config_save_keys "${CONFIG_FILE}" AI_SERVICE_IMAGE AI_RUNTIME_BUILD AI_ADMIN_IMAGE ADMIN_API_URL
+  fi
+
   if [[ -z "${AI_SERVICE_IMAGE:-}" ]]; then
     if [[ -n "${AI_ADMIN_IMAGE:-}" ]]; then
       log_warn "AI_ADMIN_IMAGE is set without AI_SERVICE_IMAGE; the optional AI Service module will be skipped."
@@ -171,6 +185,13 @@ setup_mark_admin_password_pending() {
 setup_print_completion() {
   local pending_file
   local password_line="初始密码：已设置（仅在首次安装成功时显示）"
+
+  if [[ "${ADMIN_ENABLED:-false}" == true ]]; then
+    printf '\nAI Customer Platform 安装完成\n网站地址：\nhttps://%s\n' "${DOMAIN}"
+    admin_print_completion
+    printf '\n维护命令：\n./manage.sh status\n./manage.sh logs\n./manage.sh restart\n'
+    return 0
+  fi
 
   pending_file="$(setup_admin_password_pending_file)"
   if [[ -L "${pending_file}" || (-e "${pending_file}" && ! -f "${pending_file}") ]]; then

@@ -1,0 +1,21 @@
+# Managed by AI Customer Platform Installer unified Admin.
+[Unit]
+Description=AI Customer Platform restricted maintenance executor
+After=docker.service
+
+[Service]
+Type=simple
+WorkingDirectory={{INSTALLER_ROOT}}
+Environment="CONFIG_FILE={{CONFIG_FILE}}"
+ExecStart=/bin/bash "{{INSTALLER_ROOT}}/modules/admin/worker.sh"
+Restart=on-failure
+RestartSec=5
+UMask=0077
+# Child maintenance commands must survive the UI stopping/recreating itself.
+TimeoutStopSec=infinity
+KillMode=mixed
+StandardOutput=null
+StandardError=null
+
+[Install]
+WantedBy=multi-user.target

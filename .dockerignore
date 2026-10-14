@@ -7,3 +7,10 @@
 !stacks/
 !stacks/ai-service/
 !stacks/ai-service/Dockerfile.runtime
+!platform_admin/
+!platform_admin/*.py
+!platform_admin/requirements.txt
+!platform_admin/templates/
+!platform_admin/templates/*.html
+!stacks/admin/
+!stacks/admin/Dockerfile

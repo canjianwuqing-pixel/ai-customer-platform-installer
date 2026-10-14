@@ -72,9 +72,6 @@ ai_service_validate_config() {
     AI_SERVICE_IMAGE \
     AI_ADMIN_IMAGE \
     AI_SERVICE_INTERNAL_TOKEN \
-    AI_ADMIN_USERNAME \
-    AI_ADMIN_PASSWORD \
-    AI_ADMIN_SESSION_SECRET \
     AI_SERVICE_BIND_ADDRESS \
     AI_SERVICE_HTTP_PORT \
     AI_SERVICE_CONTAINER_PORT \
@@ -100,10 +97,13 @@ ai_service_validate_config() {
     return 1
   fi
 
-  if ! ai_service_validate_secret AI_SERVICE_INTERNAL_TOKEN 32 ||
-    ! ai_service_validate_secret AI_ADMIN_PASSWORD 16 ||
-    ! ai_service_validate_secret AI_ADMIN_SESSION_SECRET 32; then
+  if ! ai_service_validate_secret AI_SERVICE_INTERNAL_TOKEN 32; then
     return 1
+  fi
+  if [[ "${ADMIN_ENABLED:-false}" != true ]]; then
+    validation_require_keys AI_ADMIN_USERNAME AI_ADMIN_PASSWORD AI_ADMIN_SESSION_SECRET
+    ai_service_validate_secret AI_ADMIN_PASSWORD 16 || return 1
+    ai_service_validate_secret AI_ADMIN_SESSION_SECRET 32 || return 1
   fi
 
   if [[ -n "${OPENAI_API_KEY:-}" ]] && ! ai_service_validate_secret OPENAI_API_KEY 20; then
@@ -115,7 +115,7 @@ ai_service_validate_config() {
     return 1
   fi
 
-  if [[ ! "${AI_ADMIN_USERNAME}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{2,63}$ ]]; then
+  if [[ "${ADMIN_ENABLED:-false}" != true && ! "${AI_ADMIN_USERNAME}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{2,63}$ ]]; then
     log_error "AI_ADMIN_USERNAME must contain 3-64 safe account-name characters."
     return 1
   fi

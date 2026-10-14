@@ -54,6 +54,26 @@ nginx_validate_config() {
   fi
 }
 
+nginx_render_admin_location() {
+  local output_file="$1" snippet combined
+  snippet="$(mktemp)"; combined="$(mktemp)"
+  if [[ "${ADMIN_ENABLED:-false}" == true ]]; then
+    if ! validation_is_bind_address "${ADMIN_UPSTREAM_HOST:-}" ||
+      ! validation_is_port "${AI_ADMIN_HTTP_PORT:-}"; then
+      rm -f -- "${snippet}" "${combined}"
+      log_error "Unified Admin upstream configuration is invalid."
+      return 1
+    fi
+    sed -e "s|{{ADMIN_UPSTREAM_HOST}}|${ADMIN_UPSTREAM_HOST}|g" \
+      -e "s|{{AI_ADMIN_HTTP_PORT}}|${AI_ADMIN_HTTP_PORT}|g" \
+      "${INSTALLER_ROOT}/templates/nginx/admin.conf.template" >"${snippet}" || return 1
+  fi
+  awk -v snippet="${snippet}" '/# PLATFORM_ADMIN_LOCATION/ {while ((getline line < snippet) > 0) print line; close(snippet); next} {print}' \
+    "${output_file}" >"${combined}" || return 1
+  mv -- "${combined}" "${output_file}"
+  rm -f -- "${snippet}"
+}
+
 nginx_render_template() {
   local output_file="$1"
 
@@ -69,6 +89,7 @@ nginx_render_template() {
     return 1
   fi
 
+  nginx_render_admin_location "${output_file}" || return 1
   if grep -Eq '{{[A-Z0-9_]+}}' "${output_file}"; then
     log_error "Rendered Nginx configuration contains unresolved template variables."
     return 1

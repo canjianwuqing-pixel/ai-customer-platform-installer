@@ -236,6 +236,12 @@ backup_write_configuration_files() {
   backup_copy_protected_file "${CONFIG_FILE}" "${staging_directory}/config/platform.env" || return 1
   backup_copy_protected_file "${CHATWOOT_COMPOSE_FILE}" "${staging_directory}/compose/chatwoot.compose.yaml" || return 1
   backup_copy_protected_file "${AI_SERVICE_COMPOSE_FILE}" "${staging_directory}/compose/ai-service.compose.yaml" || return 1
+  if [[ "${ADMIN_ENABLED:-false}" == true ]]; then
+    backup_copy_protected_file "${INSTALLER_ROOT}/stacks/admin/compose.yaml" "${staging_directory}/compose/admin.compose.yaml" || return 1
+  fi
+  if [[ "${AI_RUNTIME_BUILD:-false}" == true ]]; then
+    backup_copy_protected_file "${INSTALLER_ROOT}/stacks/ai-service/compose.runtime.yaml" "${staging_directory}/compose/runtime.compose.yaml" || return 1
+  fi
   backup_copy_protected_file "${NGINX_SITE_CONFIG_PATH}" "${staging_directory}/nginx/site.conf" || return 1
   backup_write_ssl_record "${staging_directory}/config/ssl-record.env" || return 1
 }

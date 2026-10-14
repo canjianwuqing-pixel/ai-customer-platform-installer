@@ -13,6 +13,9 @@ ai_service_compose() {
   if [[ "${AI_RUNTIME_BUILD:-false}" == "true" ]]; then
     runtime_arguments+=(--file "${INSTALLER_ROOT}/stacks/ai-service/compose.runtime.yaml")
   fi
+  if [[ "${ADMIN_ENABLED:-false}" == true ]]; then
+    runtime_arguments+=(--file "${INSTALLER_ROOT}/stacks/admin/compose.yaml")
+  fi
 
   docker_execute compose \
     --project-name "${AI_SERVICE_COMPOSE_PROJECT}" \

@@ -15,6 +15,7 @@ source "${INSTALLER_ROOT}/lib/setup.sh"
 source "${INSTALLER_ROOT}/lib/records.sh"
 source "${INSTALLER_ROOT}/lib/services.sh"
 source "${INSTALLER_ROOT}/lib/domains.sh"
+source "${INSTALLER_ROOT}/lib/admin.sh"
 
 readonly -a MODULE_FILES=(
   "modules/system/check.sh"
@@ -29,6 +30,10 @@ readonly -a MODULE_FILES=(
   "modules/ai-service/configure.sh"
   "modules/ai-service/install.sh"
   "modules/ai-service/verify.sh"
+  "modules/admin/check.sh"
+  "modules/admin/configure.sh"
+  "modules/admin/install.sh"
+  "modules/admin/verify.sh"
   "modules/nginx/install.sh"
   "modules/nginx/configure.sh"
   "modules/nginx/verify.sh"
@@ -76,6 +81,10 @@ register_core_steps() {
     register_installer_step "ai-service.check" ai_service_check
     register_installer_step "ai-service.configure" ai_service_configure
     register_installer_step "ai-service.install" ai_service_install
+    if [[ "${ADMIN_ENABLED:-false}" == true ]]; then
+      register_installer_step "admin.install" admin_install
+      register_installer_step "admin.verify" admin_verify
+    fi
     register_installer_step "ai-service.verify" ai_service_verify
   fi
   register_installer_step "nginx.install" nginx_install
@@ -113,6 +122,7 @@ run_install_command() {
   services_load
   domains_load
   secrets_ensure
+  admin_prepare_credentials
   setup_mark_admin_password_pending
   validation_validate_base_config
   register_core_steps

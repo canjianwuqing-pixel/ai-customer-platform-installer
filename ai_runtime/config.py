@@ -14,6 +14,9 @@ import yaml
 SERVICE_ID = re.compile(r"[a-z][a-z0-9_-]{0,63}\Z")
 REFERENCE = re.compile(r"[a-z][a-z0-9._/-]{0,127}\Z")
 ENV_NAME = re.compile(r"[A-Z_][A-Z0-9_]*\Z")
+RESERVED_CREDENTIALS = {"SERVICE_MANAGEMENT_TOKEN", "INTERNAL_API_TOKEN", "AI_SERVICE_INTERNAL_TOKEN",
+                        "ADMIN_SESSION_SECRET", "ADMIN_PASSWORD_HASH", "ADMIN_MAINTENANCE_TOKEN",
+                        "AI_ADMIN_SESSION_SECRET", "AI_ADMIN_PASSWORD", "DATABASE_PASSWORD", "REDIS_PASSWORD", "SECRET_KEY_BASE"}
 SERVICE_FIELDS = {
     "id", "name", "enabled", "ai_config", "prompt_config",
     "knowledge_config", "channel_config",
@@ -176,9 +179,14 @@ class ServiceResolver:
 
         return ManagementStore(self).read_services()
 
-    def _profile(self, kind: str, reference: str, allowed: set[str]) -> dict:
+    def _profile(self, kind: str, reference: str, allowed: set[str], *, profiles=None) -> dict:
         if not reference:
             return {}
+        if profiles is None:
+            from .management_store import ManagementStore
+            profiles = ManagementStore(self).profile_overrides()
+        if (kind, reference) in profiles:
+            return dict(profiles[(kind, reference)])
         path = _inside(self.config_dir / kind, reference + ".yaml")
         data = _load_yaml(path)
         if not set(data) <= allowed:
@@ -189,8 +197,10 @@ class ServiceResolver:
     def resolve(self, service_id: str | None = None) -> RuntimeConfig:
         if service_id is not None and not SERVICE_ID.fullmatch(service_id):
             raise RuntimeFailure("invalid_service_id", 422)
-        services = self._services()
-        selected = service_id or self.env.get("AI_DEFAULT_SERVICE_ID", "")
+        from .management_store import ManagementStore
+        services, profiles = ManagementStore(self).runtime_state()
+        runtime = profiles.get(("runtime", "default"), {})
+        selected = service_id or runtime.get("default_service_id", self.env.get("AI_DEFAULT_SERVICE_ID", ""))
         if not selected:
             enabled = [key for key, value in services.items() if value["enabled"]]
             if len(enabled) == 1:
@@ -204,15 +214,15 @@ class ServiceResolver:
         entry = services[selected]
         if not entry["enabled"]:
             raise RuntimeFailure("service_disabled", 409)
-        return self.runtime_for_instance(entry)
+        return self.runtime_for_instance(entry, profiles=profiles)
 
-    def runtime_for_instance(self, entry: dict) -> RuntimeConfig:
+    def runtime_for_instance(self, entry: dict, *, profiles=None) -> RuntimeConfig:
         """Resolve a validated record, including a not-yet-committed API edit."""
         if not entry["ai_config"]:
             raise RuntimeFailure("ai_configuration_missing")
-        ai = self._profile("ai", entry["ai_config"], {"model", "api_base_url", "api_key_env"})
-        prompt = self._profile("prompts", entry["prompt_config"], {"system_prompt", "reply_rules"})
-        knowledge = self._profile("knowledge", entry["knowledge_config"], {"source", "max_characters"})
+        ai = self._profile("ai", entry["ai_config"], {"model", "api_base_url", "api_key_env"}, profiles=profiles)
+        prompt = self._profile("prompts", entry["prompt_config"], {"system_prompt", "reply_rules"}, profiles=profiles)
+        knowledge = self._profile("knowledge", entry["knowledge_config"], {"source", "max_characters"}, profiles=profiles)
         return self._runtime_config(entry["id"], ai, prompt, knowledge)
 
     def _runtime_config(self, service_id, ai, prompt, knowledge, *, legacy=False):
@@ -226,7 +236,7 @@ class ServiceResolver:
         if parsed_url.scheme not in {"https", "http"} or not parsed_url.hostname or parsed_url.username or parsed_url.password or parsed_url.query or parsed_url.fragment:
             raise RuntimeFailure("invalid_provider_url")
         api_key_env = _text(ai.get("api_key_env", "OPENAI_API_KEY"))
-        if not ENV_NAME.fullmatch(api_key_env):
+        if not ENV_NAME.fullmatch(api_key_env) or api_key_env in RESERVED_CREDENTIALS:
             raise RuntimeFailure("invalid_configuration")
         system_prompt = _text(
             self.env.get("AI_SYSTEM_PROMPT", "") if legacy else prompt.get("system_prompt", ""),

@@ -1,6 +1,6 @@
 # AI Customer Platform Installer
 
-一个面向 Ubuntu 服务器的模块化 AI 客服平台安装器项目。项目通过一个入口脚本完成 Chatwoot 基础部署，并可按需启用独立 AI Service 和 AI 管理后台，为后续知识库等组件保留清晰的扩展边界。
+一个面向 Ubuntu 服务器的模块化 AI 客服平台安装器项目。项目通过一个入口脚本完成 Chatwoot 基础部署，并可按需启用 AI Runtime 和统一 `/admin` 管理后台，为后续知识库等组件保留清晰的扩展边界。
 
 ## 当前阶段
 
@@ -29,7 +29,7 @@
 
 安装器按 `config/default.env`、`config/images.env`、`.env` 的顺序加载配置，后加载的用户配置优先。`config/images.env` 提供 Chatwoot、PostgreSQL 和 Redis 的固定版本，禁止使用 `latest`；`config/default.env` 保存非敏感运行参数。高级用户可以在 `.env` 中覆盖版本和镜像设置。
 
-`DATABASE_PASSWORD`、`REDIS_PASSWORD`、`SECRET_KEY_BASE`、`AI_SERVICE_INTERNAL_TOKEN`、`AI_ADMIN_SESSION_SECRET`、`AI_ADMIN_PASSWORD` 和 `SERVICE_MANAGEMENT_TOKEN` 可以留空；安装器首次运行时会自动生成安全随机值，重复执行时保留已有值，并将 `.env` 权限限制为 `0600`。启用 AI Service 时，管理员账号固定为 `admin`，初始密码只在该模块完整安装成功后显示一次。不得向 Git 提交真实域名、邮箱、数据库密码、Redis 密码、密钥、证书或 Token。`.env`、PEM 和私钥文件已加入 `.gitignore`。
+`DATABASE_PASSWORD`、`REDIS_PASSWORD`、`SECRET_KEY_BASE`、`AI_SERVICE_INTERNAL_TOKEN` 和 `SERVICE_MANAGEMENT_TOKEN` 可以留空；安装器首次运行时自动生成安全随机值，重复执行保留已有值，并将 `.env` 权限限制为 `0600`。统一后台使用 `ADMIN_USERNAME`、`ADMIN_PASSWORD_HASH`、`ADMIN_SESSION_SECRET`，默认账号为 `admin`，初始密码只在完整安装成功后显示一次。旧自定义管理镜像的 `AI_ADMIN_*` 凭据仅为兼容已有部署保留；启用统一后台时会迁移为同一个账号并清空旧凭据，不再生成旧明文密码。不得向 Git 提交真实域名、邮箱、密码、密钥、证书或 Token。
 
 `DOMAIN` 是当前唯一部署域名；`LETSENCRYPT_EMAIL` 用于 Let's Encrypt 账户和证书通知，`EMAIL` 继续作为 Chatwoot 的业务发件地址。V1 固定使用 Let's Encrypt HTTP-01 验证，因此域名必须能通过公共 DNS 解析到部署入口，公网 TCP 80 端口必须可达。
 
@@ -37,7 +37,50 @@
 
 Chatwoot、pgvector/PostgreSQL 和 Redis 镜像均通过 `.env` 使用明确版本标签。PostgreSQL 与 Redis 不发布宿主机端口；Rails 默认只绑定到 `.env` 配置的本地地址，后续由 Nginx 模块接入。
 
-AI Service 不是基础安装必选项。未设置 `AI_SERVICE_IMAGE` 时，安装器会跳过全部 AI 部署步骤并在完成时提示可后续启用。高级用户可在 `.env` 中同时设置 `AI_SERVICE_IMAGE` 和 `AI_ADMIN_IMAGE`；两个镜像都必须使用固定标签或 SHA-256 digest，并遵守 Compose 中声明的环境变量与健康端点契约。OpenAI API Key 和模型选择改由 AI 管理后台配置，不属于安装必填项。内部 Token、管理密码和会话 Secret 仍只保存在本地 `.env`，安装器不会输出其值。
+AI Service 和统一后台不是 Chatwoot 基础安装必选项。未配置 AI 镜像且未启用统一后台时，安装器跳过全部 AI 步骤。启用统一后台参见下一节；高级用户仍可覆盖固定标签或 digest 的镜像。OpenAI API Key 不属于安装必填项，也不通过浏览器表单写入；仅由 Runtime 的受保护环境文件提供，后台只选择模型与凭据环境变量引用。
+
+## 统一管理后台（第十四阶段）
+
+统一管理后台是平台唯一管理入口：`https://<DOMAIN>/admin`。只有一个管理员账号，不创建 Service Admin、Domain Admin 或其他账号体系。Chatwoot 自身的客服业务登录不作为平台管理入口。
+
+在本地 `.env` 设置 `ADMIN_ENABLED=true`，然后执行 `bash install.sh`。仍只询问域名、邮箱；没有 AI 镜像时会自动选择 `config/images.env` 中的固定本地构建标签，同时启用仓库内 Runtime。已有自定义 AI 镜像则继续保留，必须实现本仓库的 Service Management / profile API；如需切换到仓库 Runtime，显式设置 `AI_RUNTIME_BUILD=true`。镜像、端口、Session 有效期、维护目录均可通过 `.env` 覆盖，禁止 `latest`。需要支持 `!override` 的 Docker Compose 2.24.4+、宿主机 Python 3 和 systemd。
+
+`modules/admin/` 管理部署与健康检查；`stacks/admin/compose.yaml` 是现有 AI Stack 的覆盖文件，**替换原 `ai-admin` 服务，而不是再创建一个后台**。保留其内部服务名和 `ai_admin_data` 卷，兼容 `manage.sh`、备份、升级与回滚。`AI_ADMIN_IMAGE` 现在是这个唯一管理组件的镜像版本，不表示第二个后台；旧外部后台镜像不再与统一后台同时启动。常用运维命令不变，无需进入子目录。
+
+页面使用服务端渲染与基础 JSON 配置表单，不引入复杂前端框架。可以查看、创建、编辑、启用/禁用客服实例；管理域名绑定；管理 AI 模型、系统提示词、回复规则、Runtime 默认实例、知识库与渠道配置引用。域名页只修改绑定数据，不修改 DNS 或申请证书；知识库不提供文件上传/向量索引，渠道页不建立外部平台连接。
+
+认证与安全：
+
+- 初始密码由安全随机 nonce 与 Session Secret 经 HMAC 派生，再通过标准输入生成 PBKDF2-SHA256 哈希，`.env` 只保存 `ADMIN_PASSWORD_HASH`。旧密码仅用于迁移为这个账号，随后清空旧字段，不重新展示已知旧密码。安装未完成时，本地 `.installer-admin-password-once` 仅保存 nonce（不是密码），权限 `0600`、已忽略 Git；成功展示后删除，不进入备份。生成和哈希计算期间关闭 shell tracing，不记录初始密码；请不要录制终端输出。
+- 后台修改密码需校验当前密码，至少 16 字符；仅哈希写入管理数据卷的 `auth.sqlite3`。数据卷中的密码优先于 `.env` 的初始哈希，重新部署不会重置密码；恢复旧备份会恢复当时密码。
+- Session 为随机不透明 Cookie，数据库只存其摘要；默认一小时有效，登录轮换、退出撤销、修改密码撤销全部 Session。Cookie 使用 Secure、HttpOnly、SameSite=Strict，所有写请求验证 CSRF，登录失败有全局限速。仅支持 HTTPS 登录。
+- 浏览器使用 `/admin/api/*` + Session；后台服务端再用 `SERVICE_MANAGEMENT_TOKEN` 调用内部 `/management/*`。不返回 Token、环境变量、完整异常或维护脚本输出。原 `/chat` 和 `/management` Token 认证继续独立工作。
+
+配置 API：内部 `/management/profiles/{ai|prompts|knowledge|channels|runtime}` 支持 GET 列表、POST 创建；`/{id}` 支持 GET、PUT。AI 字段沿用 `model`、`api_base_url`、`api_key_env`；提示词沿用 `system_prompt`、`reply_rules`；知识库沿用 `source`、`max_characters`；渠道仅存 `enabled`、`provider`、`config_ref`；Runtime 仅有 `default` 记录的 `default_service_id`。不接收 API Key / 密码 / Token 字段。后台对应接口位于 `/admin/api/{kind}`，修改请求还需 `X-CSRF-Token`。浏览器从页面表单取得 CSRF，不取得内部认证 Token。
+
+profile API 采用与现有配置相同的 SQLite 覆盖方式，不重写 YAML：API profile > 原 profile YAML；Runtime 默认实例为 API default > `AI_DEFAULT_SERVICE_ID` > 唯一启用实例。schema 从 1 事务性迁移至 2，原 Service / Domain 数据保留，下一次 Runtime 请求读取新配置。原来的单实例环境变量模式继续有效。
+
+### 后台系统维护
+
+`/admin/maintenance` 调用原 `backup.sh`、`restore.sh`、`upgrade.sh`、`rollback.sh`，不重写其数据处理逻辑。每次操作必须输入对应的 `BACKUP` / `RESTORE` / `UPGRADE` / `ROLLBACK`；恢复/回滚还必须选择有效版本 ID。升级目标仍由原 `.env` 中 `UPGRADE_*` 固定版本决定，镜像需已发布或可由原升级脚本拉取，不会通过后台自动发布本地构建镜像。
+
+维护由宿主机 systemd 执行器运行，通过权限为 `0600` 的 Unix socket + 独立随机 Token 接收四种固定命令，拒绝任意路径、参数和 Shell。Web 容器不挂载 Docker socket、宿主 `.env` 或备份目录。执行器有维护主机所需的 root 权限，应部署在可信、受保护的仓库目录；其 socket 访问权限等同于授权执行这四种高权限操作，不是通用沙箱。
+
+任务串行执行，状态写入 `ADMIN_MAINTENANCE_STATE_DIR`，容器停机/重建不会中断宿主机任务。恢复/升级时后台可能暂时不可达，稍后重新登录查看结果；后台只显示状态、版本 ID，不显示脚本日志。进程意外重启会标记未完成任务为 `interrupted`，不会自动重试破坏性操作，需操作者检查服务器。CLI 运维期间请勿并行提交后台任务。执行器安装时不强制重启已有服务，代码更新请在确认无维护任务时手动重启配置指定的 systemd unit。
+
+统一后台与 Runtime 覆盖 Compose 文件、账号哈希数据库、Session 数据、API 配置均随已有备份保存/恢复；维护任务账本留在宿主机，不回滚任务历史。旧备份格式仍可读取。不开启定时任务、云存储、多管理员、角色权限、多租户或统计报表。未来在同一入口扩展多 AI、多渠道、多域名、多知识库与多平台。
+
+测试：
+
+```bash
+python3 -m venv runtime/admin-venv
+runtime/admin-venv/bin/python -m pip install -r platform_admin/requirements.txt -r ai_runtime/requirements.txt
+ADMIN_TEST_PYTHON="$PWD/runtime/admin-venv/bin/python" bash tests/admin-fixture-test.sh
+ADMIN_TEST_PYTHON="$PWD/runtime/admin-venv/bin/python" bash tests/admin-module-fixture-test.sh
+runtime/admin-venv/bin/python tests/admin_compose_check.py
+```
+
+可用 `ADMIN_TEST_PYTHON` 指定 fixture 的 Python、`TEST_COMPOSE_BINARY` 指定独立 Compose 可执行文件；检查只输出结论，不打印解析后的敏感环境配置。安全属性参考 [Starlette Cookie 接口](https://starlette.dev/responses/) 和 [Python 密码派生函数](https://docs.python.org/3.12/library/hashlib.html#hashlib.pbkdf2_hmac)。
 
 ## Service Management Core
 
@@ -80,7 +123,7 @@ services:
 
 `ai/ai-a.yaml` 配置 `model`、`api_base_url` 和 `api_key_env`；后者只保存凭据的环境变量名。`prompts/prompt-a.yaml` 配置 `system_prompt` 和 `reply_rules` 字符串列表。`knowledge/knowledge-a.yaml` 配置 `source` 和 `max_characters`，`source` 是相对 `AI_SERVICE_DATA_PATH/services/service_a/` 的 UTF-8 文本文件路径。B 实例使用自己的引用和数据目录。空的提示词/知识库引用表示不附加该上下文；引用非空时文件必须存在。当前知识库实现为受大小限制的本地文本上下文，不包含向量检索。
 
-省略 `service_id` 时，优先使用环境变量 `AI_DEFAULT_SERVICE_ID`；未指定且只有一个启用实例时使用该实例。多个实例启用时必须明确设置默认实例。只有实例集合完全为空时，才使用已有的 `AI_MODEL`、`OPENAI_API_KEY` 环境变量，以及可选的 `AI_SYSTEM_PROMPT` 和 `AI_API_BASE_URL`，保留单实例环境变量模式。显式无效、未知、禁用实例或缺失配置会返回明确错误，不会借用其他实例配置。
+省略 `service_id` 时，优先使用 API Runtime default 配置，其次为环境变量 `AI_DEFAULT_SERVICE_ID`；未指定且只有一个启用实例时使用该实例。多个实例启用时必须明确设置默认实例。只有实例集合完全为空时，才使用已有的 `AI_MODEL`、`OPENAI_API_KEY` 环境变量，以及可选的 `AI_SYSTEM_PROMPT` 和 `AI_API_BASE_URL`，保留单实例环境变量模式。显式无效、未知、禁用实例或缺失配置会返回明确错误，不会借用其他实例配置。
 
 Runtime 每次请求独立加载默认配置和用户覆盖配置，不保存共享对话上下文；知识文件限制在对应实例的数据目录内。API Key 仅从环境变量读取，配置/请求校验错误及上游错误均返回错误码，不输出完整配置、消息内容或上游响应。多实例隔离是运行配置与上下文隔离；未来的多租户权限管理仍需单独实现。
 
@@ -98,7 +141,7 @@ AI_RUNTIME_TEST_PYTHON="$PWD/runtime/ai-runtime-venv/bin/python" bash tests/ai-r
 
 ## Service Management API
 
-Service Management API 是未来统一 AI 客服管理后台的后端基础，已集成到仓库内的 FastAPI Runtime。启用 `AI_RUNTIME_BUILD=true` 后，管理接口与 `/chat` 使用同一服务端口，默认仅监听宿主机环回地址。它管理客服实例与域名映射，未来可供 Web 管理后台扩展多 AI、多渠道和多域名；当前提供后端 API，不创建前端页面，也不操作 DNS、SSL 或外部平台。
+Service Management API 是统一 AI 客服管理后台的后端基础，已集成到仓库内的 FastAPI Runtime。启用 `AI_RUNTIME_BUILD=true` 后，管理接口与 `/chat` 使用同一服务端口，默认仅监听宿主机环回地址。它管理客服实例、域名映射与非敏感 Runtime profile，供唯一 `/admin` 入口使用，不操作 DNS、SSL 或外部平台。
 
 所有 `/management/*` 接口要求 `Authorization: Bearer <SERVICE_MANAGEMENT_TOKEN>`。该 Token 由安装器自动生成，保存在权限为 `0600` 的本地 `.env` 中，且与聊天接口的 `AI_SERVICE_INTERNAL_TOKEN` 分开使用；聊天 Token 无权修改管理数据。升级已有部署时重新运行安装器可补齐缺失 Token，已有值会保留。直接运行 Runtime 时须通过环境变量提供至少 32 字符的管理 Token，缺失或过短时管理请求拒绝访问。
 
@@ -129,7 +172,7 @@ Domain 创建请求使用 `domain`、`service_id`、`enabled`、`default_entry`�
 
 SQLite 默认位于 `AI_SERVICE_DATA_PATH/management/core.sqlite3`，使用现有 AI 数据卷持久化，并纳入该数据卷的备份恢复。可用 `SERVICE_MANAGEMENT_DATABASE` 指定容器内的其他绝对路径；自定义路径需自行确保持久化。数据库目录和文件在 Ubuntu 上分别要求 `0700`、`0600`，数据库文件已被 Git 忽略。配置目录仍是只读挂载，管理 API 不写入原 YAML。API 与 Runtime 使用同一覆盖层，成功修改后的下一次 `/chat` 请求即可读取新配置，无需重启。
 
-首次 API 写入会事务性地创建并迁移数据库结构，当前 schema 版本为 1。已有 YAML 无需强制导入即可继续使用；如需将当前有效 YAML 固定为 API 记录，可调用带管理认证的 `POST /management/migrations/import-yaml`，或在已配置环境的 Runtime 中运行 `python -m ai_runtime.management_migrate`。导入可重复执行，保留已有 API 修改与删除标记，不改写原文件。遇到不支持的较新 schema 版本时会拒绝读写，避免旧程序修改新数据库。
+首次 API 写入会事务性地创建并迁移数据库结构，当前 schema 版本为 2。已有 YAML 无需强制导入即可继续使用；如需将当前有效 YAML 固定为 API 记录，可调用带管理认证的 `POST /management/migrations/import-yaml`，或在已配置环境的 Runtime 中运行 `python -m ai_runtime.management_migrate`。导入可重复执行，保留已有 API 修改与删除标记，不改写原文件。遇到不支持的较新 schema 版本时会拒绝读写，避免旧程序修改新数据库。
 
 创建成功返回 `201`，删除成功返回 `204`；非法输入返回 `422`，认证失败返回 `401`，重复记录或绑定冲突返回 `409`，存储或认证配置不可用返回 `503`。错误响应只包含稳定错误码，不回显请求体或数据库异常。接口只接受配置引用，不接收 API Key、密码或 Token 字段，也不记录完整配置。
 

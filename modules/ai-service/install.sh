@@ -13,20 +13,27 @@ ai_service_install() {
 
   if [[ "${AI_RUNTIME_BUILD:-false}" == "true" ]]; then
     log_info "[ai-service] Building the configured first-party runtime image."
-    if ! ai_service_compose build ai-service || ! ai_service_compose pull ai-admin; then
+    if ! ai_service_compose build ai-service; then
       log_error "Failed to build AI Runtime or pull the administration image."
       return 1
     fi
+    if [[ "${ADMIN_ENABLED:-false}" != true ]]; then
+      ai_service_compose pull ai-admin || return 1
+    fi
   else
     log_info "[ai-service] Pulling fixed-version FastAPI and administration images."
-    if ! ai_service_compose pull; then
+    local -a pull_services=(ai-service ai-admin)
+    [[ "${ADMIN_ENABLED:-false}" != true ]] || pull_services=(ai-service)
+    if ! ai_service_compose pull "${pull_services[@]}"; then
       log_error "Failed to pull one or more AI Service images."
       return 1
     fi
   fi
 
   log_info "[ai-service] Starting the FastAPI service and administration backend."
-  if ! ai_service_compose up -d ai-service ai-admin; then
+  local -a start_services=(ai-service ai-admin)
+  [[ "${ADMIN_ENABLED:-false}" != true ]] || start_services=(ai-service)
+  if ! ai_service_compose up -d "${start_services[@]}"; then
     log_error "Failed to start the AI Service stack."
     return 1
   fi

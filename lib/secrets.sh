@@ -182,6 +182,9 @@ secrets_ensure() {
   AI_ADMIN_PASSWORD_GENERATED="false"
 
   for key in "${INSTALLER_SECRET_KEYS[@]}"; do
+    if [[ "${ADMIN_ENABLED:-false}" == true && "${key}" == AI_ADMIN_* ]]; then
+      continue
+    fi
     if ((INSTALLER_SECRET_KEY_COUNTS["${key}"] == 1)) && [[ -n "${!key:-}" ]]; then
       continue
     fi

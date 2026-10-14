@@ -144,6 +144,14 @@ backup_restore_project_files() {
   )
 
   log_info "[restore] Staging the protected environment and Compose configuration files."
+  if [[ -f "${backup_directory}/compose/admin.compose.yaml" ]]; then
+    source_paths+=("${backup_directory}/compose/admin.compose.yaml")
+    target_paths+=("${INSTALLER_ROOT}/stacks/admin/compose.yaml")
+  fi
+  if [[ -f "${backup_directory}/compose/runtime.compose.yaml" ]]; then
+    source_paths+=("${backup_directory}/compose/runtime.compose.yaml")
+    target_paths+=("${INSTALLER_ROOT}/stacks/ai-service/compose.runtime.yaml")
+  fi
   for ((index = 0; index < ${#target_paths[@]}; index++)); do
     source_path="${source_paths[index]}"
     target_path="${target_paths[index]}"

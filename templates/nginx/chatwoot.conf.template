@@ -5,6 +5,7 @@ server {
     server_name {{DOMAIN}};
 
     client_max_body_size {{NGINX_CLIENT_MAX_BODY_SIZE}};
+    # PLATFORM_ADMIN_LOCATION
 
     location / {
         proxy_pass http://{{NGINX_UPSTREAM_HOST}}:{{CHATWOOT_HTTP_PORT}};

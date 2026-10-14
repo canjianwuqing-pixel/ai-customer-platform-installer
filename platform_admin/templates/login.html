@@ -1,0 +1,2 @@
+{% set login = true %}{% extends "base.html" %}{% block content %}
+<h2>管理员登录</h2><form method="post" action="/admin/login"><input type="hidden" name="csrf" value="{{ csrf }}"><label>账号 <input name="username" autocomplete="username" required maxlength="64"></label><label>密码 <input name="password" type="password" autocomplete="current-password" required maxlength="1024"></label><button>登录</button></form>{% endblock %}
