@@ -90,7 +90,9 @@ TEST_JOBS=4 bash tests/run-all.sh
 
 写请求仍按 Session → 请求体/CSRF → Origin → 业务操作校验。来源按 `(scheme, host, effective_port)` 比较，DNS 大小写和默认 HTTPS `:443` 等价，不把 ASGI 路径前缀作为来源；其他协议、其他主机、其他有效端口，以及空、重复、`null`、带路径/用户信息的 Origin 均拒绝。没有 Origin 的既有客户端仍必须通过 Session 和 CSRF。HTTP 跳转使用配置的 `DOMAIN_HTTPS_PORT`，默认 443 的跳转格式保持不变。
 
-基线测试确认：标准 443、正确转发头的请求原本可登录，不能把任何现场 `origin_rejected` 都归因于代理协议或密码。可复现的问题是 `$host` 丢失非默认端口，以及将 `request.base_url` 直接与 Origin 作字符串比较。旧测试使用 HTTPS TestClient，正常登录没有携带 Origin，未覆盖此链路。修复不涉及账号、已有凭据、数据卷或密码迁移。
+此前 HTTP 客户端测试只证明：主动提供正确 Origin 时，标准 443 请求可以登录；它不能验证浏览器如何为原生 HTML Form POST 生成 Origin。此前修复的 `$host` 端口丢失、`request.base_url` 字符串比较问题仍有回归覆盖，但不是浏览器 `Origin: null` 的根因。
+
+真实 Chromium（Chrome 155）现已复现另一条完整链路：登录页响应 `Referrer-Policy: no-referrer` → 浏览器原生表单 POST 自动发送 `Origin: null`，即使 `sec-fetch-site: same-origin` → 严格来源检查返回 `403 origin_rejected`。这是 [Fetch Origin 算法](https://fetch.spec.whatwg.org/#origin-header) 的规定，不是密码错误。Admin 统一改用 `Referrer-Policy: same-origin`，让同源表单保留有效 Origin，同时仍不向其他来源发送 Referer；参见 [same-origin 策略](https://w3c.github.io/webappsec-referrer-policy/#referrer-policy-same-origin)。保留原始 HTML 表单，不添加 JS 登录、不改代理或服务器配置，不接受 `Origin: null`，也不把 `sec-fetch-site` 当作来源校验的替代。
 
 真实反代回归使用生产 Uvicorn 启动参数和仓库 Nginx 模板，启动临时 TLS Nginx（测试工具需支持 `-e stderr`，如 1.20+）与 HTTP Uvicorn。域名、密码、证书、端口和数据目录均在测试时生成；证书验证保持开启，不改系统 hosts、DNS、证书或现有 Nginx。覆盖标准/非默认 HTTPS authority、正常登录及改密、恶意来源、伪造转发头、CSRF/Session 和 HTTP 跳转。
 
@@ -103,6 +105,21 @@ REQUIRE_ADMIN_PROXY_TEST=true bash tests/admin-proxy-fixture-test.sh
 ```
 
 缺少测试工具时仅跳过真实网络部分；设置 `REQUIRE_ADMIN_PROXY_TEST=true` 会改为失败，CI 应启用该选项。更新已有部署需要构建包含修复的新 Admin 镜像，并通过安装器重新渲染/验证/reload 站点；仅 `git pull` 或重启旧镜像不会更新代码和生效中的 Nginx。使用升级模块时须为本地 Admin 构建选择新的固定目标标签，保持原镜像可回滚，不重置密码或数据。
+
+真实浏览器回归另外运行（Playwright 仅是测试依赖，不进入生产镜像）：
+
+```bash
+runtime/admin-venv/bin/python -m pip install -r tests/requirements-browser.txt
+# 可以使用 Playwright 配套 Chromium，或通过 TEST_CHROMIUM_BINARY 指定
+# 已安装的 Chromium/Chrome 可执行文件；始终启动临时隔离 profile。
+runtime/admin-venv/bin/python -m playwright install chromium
+ADMIN_TEST_PYTHON="$PWD/runtime/admin-venv/bin/python" \
+TEST_NGINX_BINARY="$(command -v nginx)" \
+TEST_OPENSSL_BINARY="$(command -v openssl)" \
+REQUIRE_ADMIN_BROWSER_TEST=true bash tests/admin-browser-fixture-test.sh
+```
+
+浏览器点击真实表单，测试不手工提供 Origin/Referer，也不关闭 Web 安全、SameSite 或 CSRF。使用临时域名解析规则及仅匹配测试证书公钥的进程级 TLS 例外，不安装系统证书、不修改 hosts、现有 Nginx 或用户浏览器 profile；不记录 HAR、trace、密码、Cookie 或 Token。覆盖 HTTPS 登录/退出、强制 no-referrer 后的 null Origin 拒绝、带有效 CSRF/Session 的跨来源表单拒绝、真正跨站的 Strict Cookie 防护、CSRF/Session 校验和跨来源 Referer 隐私。缺少依赖时可跳过；CI 设置 `REQUIRE_ADMIN_BROWSER_TEST=true` 后缺少工具或浏览器即失败。本次策略修复仅需部署更新后的 Admin 应用，并重新打开登录页，不要求修改服务器配置或已有凭据。
 
 配置 API：内部 `/management/profiles/{ai|prompts|knowledge|channels|runtime}` 支持 GET 列表、POST 创建；`/{id}` 支持 GET、PUT。AI 字段沿用 `model`、`api_base_url`、`api_key_env`；提示词沿用 `system_prompt`、`reply_rules`；知识库沿用 `source`、`max_characters`；渠道仅存 `enabled`、`provider`、`config_ref`；Runtime 仅有 `default` 记录的 `default_service_id`。不接收 API Key / 密码 / Token 字段。后台对应接口位于 `/admin/api/{kind}`，修改请求还需 `X-CSRF-Token`。浏览器从页面表单取得 CSRF，不取得内部认证 Token。
 

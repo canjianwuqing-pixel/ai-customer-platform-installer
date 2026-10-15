@@ -119,6 +119,16 @@ class AdminFixtures(unittest.TestCase):
             self.assertEqual(self.client.post(path, json={}).status_code, 403)
         self.assertEqual(self.client.post("/admin/api/services", json={}, headers={"x-csrf-token": self.csrf(), "origin": "https://attacker.test"}).status_code, 403)
 
+    def test_native_login_form_uses_same_origin_referrer_policy(self):
+        response = self.client.get("/admin/login")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers["referrer-policy"], "same-origin")
+        self.assertEqual(response.headers["cache-control"], "no-store")
+        self.assertEqual(response.headers["x-content-type-options"], "nosniff")
+        self.assertIn("form-action 'self'", response.headers["content-security-policy"])
+        self.assertIn("frame-ancestors 'none'", response.headers["content-security-policy"])
+        self.assertIn('<form method="post" action="/admin/login">', response.text)
+
     def test_session_expiry_and_password_change_persist_across_restart(self):
         self.login()
         old_token = self.client.cookies.get("platform_admin_session")

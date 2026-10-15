@@ -1,0 +1,2 @@
+# Optional test-only dependencies; never installed in production Admin images.
+playwright==1.64.0

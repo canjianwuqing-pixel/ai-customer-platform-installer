@@ -149,6 +149,9 @@ class NginxHTTPSFixtures(unittest.TestCase):
             listener.bind(("127.0.0.1", 0))
             return listener.getsockname()[1]
 
+    def extra_nginx_servers(self):
+        return ""
+
     def start_proxy(self):
         self.certificate = self.directory / "certificate.pem"
         key = self.directory / "certificate.key"
@@ -179,7 +182,7 @@ class NginxHTTPSFixtures(unittest.TestCase):
                           "events { worker_connections 64; }\nhttp { access_log off;\n"
                           "client_body_temp_path temp/client; proxy_temp_path temp/proxy;\n"
                           "fastcgi_temp_path temp/fastcgi; uwsgi_temp_path temp/uwsgi; scgi_temp_path temp/scgi;\n"
-                          + site + "\n}\n", encoding="utf-8")
+                          + site + self.extra_nginx_servers() + "\n}\n", encoding="utf-8")
         (self.directory / "logs").mkdir()
         (self.directory / "temp").mkdir()
         options = {"cwd": self.directory, "stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL}

@@ -111,8 +111,11 @@ def create_app(env=None, management=None, maintenance=None):
             response = await call_next(request)
         except Exception:
             response = JSONResponse({"error": "admin_unavailable"}, status_code=503)
+        # Fetch uses this document policy when generating a native form POST's
+        # Origin. no-referrer would make even a same-origin form send "null".
+        # Keep the origin for our forms, but send no Referer across origins.
         response.headers.update({"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff",
-            "Referrer-Policy": "no-referrer", "Content-Security-Policy": "default-src 'none'; style-src 'self' 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'"})
+            "Referrer-Policy": "same-origin", "Content-Security-Policy": "default-src 'none'; style-src 'self' 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'"})
         return response
 
     @app.exception_handler(AdminError)
