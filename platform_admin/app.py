@@ -6,7 +6,7 @@ import logging
 import os
 from pathlib import Path
 import re
-from urllib.parse import parse_qs
+from urllib.parse import parse_qs, urlsplit
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
@@ -16,6 +16,28 @@ from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from .auth import AdminError, AuthStore
 from .clients import InternalClient
+
+
+def origin_tuple(value):
+    """A single HTTP(S) origin, not a base URL, path or forwarding header.
+
+    Default ports and DNS case do not change an origin. Paths (including an
+    ASGI root_path), credentials, opaque origins and ambiguous headers do.
+    """
+    if not value or re.search(r"[\s\\,?#]", value):
+        return None
+    try:
+        parsed = urlsplit(value)
+        if (parsed.scheme not in {"http", "https"} or not parsed.hostname
+                or parsed.username is not None or parsed.password is not None
+                or parsed.path or parsed.netloc.endswith(":")):
+            return None
+        port = parsed.port if parsed.port is not None else {"http": 80, "https": 443}[parsed.scheme]
+        if not 1 <= port <= 65535:
+            return None
+        return parsed.scheme, parsed.hostname.lower(), port
+    except ValueError:
+        return None
 
 
 def create_app(env=None, management=None, maintenance=None):
@@ -67,9 +89,16 @@ def create_app(env=None, management=None, maintenance=None):
         supplied = request.headers.get("x-csrf-token", data.pop("csrf", ""))
         if not isinstance(supplied, str) or not hmac.compare_digest(csrf, supplied):
             raise AdminError("csrf_rejected", 403)
-        origin = request.headers.get("origin")
-        if origin and origin != str(request.base_url).rstrip("/"):
-            raise AdminError("origin_rejected", 403)
+        origins = request.headers.getlist("origin")
+        if origins:
+            # Uvicorn applies the trusted proxy's protocol. Nginx must retain
+            # the external Host authority (including its port). Do not trust
+            # browser-supplied Forwarded/X-Forwarded-Host/Port here.
+            origin = origin_tuple(origins[0])
+            hosts = request.headers.getlist("host")
+            if (len(origins) != 1 or len(hosts) != 1 or origin is None
+                    or origin != origin_tuple(request.url.scheme + "://" + hosts[0])):
+                raise AdminError("origin_rejected", 403)
         return token, data
 
     def page(name, csrf, **context):

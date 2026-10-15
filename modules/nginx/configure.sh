@@ -54,10 +54,18 @@ nginx_validate_config() {
   fi
 }
 
+nginx_https_port_suffix() {
+  local port="${DOMAIN_HTTPS_PORT:-443}"
+  validation_is_port "${port}" || { log_error 'Invalid HTTPS redirect port.'; return 1; }
+  if [[ "${port}" != 443 ]]; then printf ':%s' "${port}"; fi
+}
+
 nginx_render_admin_location() {
   local output_file="$1" snippet combined
   snippet="$(mktemp)"; combined="$(mktemp)"
   if [[ "${ADMIN_ENABLED:-false}" == true ]]; then
+    local https_port_suffix
+    https_port_suffix="$(nginx_https_port_suffix)" || { rm -f -- "${snippet}" "${combined}"; return 1; }
     if ! validation_is_bind_address "${ADMIN_UPSTREAM_HOST:-}" ||
       ! validation_is_port "${AI_ADMIN_HTTP_PORT:-}"; then
       rm -f -- "${snippet}" "${combined}"
@@ -66,6 +74,7 @@ nginx_render_admin_location() {
     fi
     sed -e "s|{{ADMIN_UPSTREAM_HOST}}|${ADMIN_UPSTREAM_HOST}|g" \
       -e "s|{{AI_ADMIN_HTTP_PORT}}|${AI_ADMIN_HTTP_PORT}|g" \
+      -e "s|{{HTTPS_PORT_SUFFIX}}|${https_port_suffix}|g" \
       "${INSTALLER_ROOT}/templates/nginx/admin.conf.template" >"${snippet}" || return 1
   fi
   awk -v snippet="${snippet}" '/# PLATFORM_ADMIN_LOCATION/ {while ((getline line < snippet) > 0) print line; close(snippet); next} {print}' \

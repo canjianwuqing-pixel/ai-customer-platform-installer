@@ -126,11 +126,14 @@ domain_install_renew_hook() {
 
 domain_render_https_template() {
   local output_file="$1"
+  local https_port_suffix
+  https_port_suffix="$(nginx_https_port_suffix)" || return 1
 
   if ! sed \
     -e "s|{{DOMAIN}}|${DOMAIN}|g" \
     -e "s|{{NGINX_LISTEN_PORT}}|${NGINX_LISTEN_PORT}|g" \
     -e "s|{{DOMAIN_HTTPS_PORT}}|${DOMAIN_HTTPS_PORT}|g" \
+    -e "s|{{HTTPS_PORT_SUFFIX}}|${https_port_suffix}|g" \
     -e "s|{{NGINX_UPSTREAM_HOST}}|${NGINX_UPSTREAM_HOST}|g" \
     -e "s|{{CHATWOOT_HTTP_PORT}}|${CHATWOOT_HTTP_PORT}|g" \
     -e "s|{{NGINX_CLIENT_MAX_BODY_SIZE}}|${NGINX_CLIENT_MAX_BODY_SIZE}|g" \

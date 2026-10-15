@@ -98,8 +98,19 @@ for rendered in http https; do
   grep -Fq 'location = /admin {' "${TEST_TEMP}/${rendered}.conf"
   grep -Fq 'location ^~ /admin/ {' "${TEST_TEMP}/${rendered}.conf"
   grep -Fq "proxy_pass http://${ADMIN_UPSTREAM_HOST}:${AI_ADMIN_HTTP_PORT};" "${TEST_TEMP}/${rendered}.conf"
+  grep -Fq 'proxy_set_header Host $http_host;' "${TEST_TEMP}/${rendered}.conf"
+  grep -Fq 'proxy_set_header X-Forwarded-Proto $scheme;' "${TEST_TEMP}/${rendered}.conf"
   if grep -Eq '{{|SERVICE_MANAGEMENT_TOKEN|ADMIN_PASSWORD_HASH' "${TEST_TEMP}/${rendered}.conf"; then exit 1; fi
 done
+# Both the interim HTTP Admin site and the final HTTPS site use the selected
+# TLS port, without changing the existing standard-443 redirect format.
+DOMAIN_HTTPS_PORT=8443
+nginx_render_template "${TEST_TEMP}/http-custom-port.conf"
+domain_render_https_template "${TEST_TEMP}/https-custom-port.conf"
+for rendered in http https; do
+  grep -Fq 'https://$host:8443$request_uri' "${TEST_TEMP}/${rendered}-custom-port.conf"
+done
+DOMAIN_HTTPS_PORT=443
 admin_print_completion >"${TEST_TEMP}/completion.log"
 if grep -Fq "${OLD_PASSWORD}" "${TEST_TEMP}/completion.log"; then exit 1; fi
 admin_print_completion >"${TEST_TEMP}/completion-again.log"

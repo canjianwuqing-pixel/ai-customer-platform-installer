@@ -63,7 +63,7 @@ AI_RUNTIME_TEST_PYTHON="$PWD/runtime/admin-venv/bin/python" \
 TEST_JOBS=4 bash tests/run-all.sh
 ```
 
-包含 Shell 语法检查、全部 fixture/Python 套件和真实 Compose 配置检查；Docker、systemd、Nginx、数据库写入均使用隔离替身，不代表真实服务器部署验证。报告保存在忽略 Git 的受保护 `runtime/tests/suite.*` 目录。
+包含 Shell 语法检查、全部 fixture/Python 套件和真实 Compose 配置检查；宿主部署操作使用隔离替身，另有下述真实 Nginx TLS 登录测试（需要测试工具）。测试数据库仅写临时目录，不代表真实服务器部署验证。报告保存在忽略 Git 的受保护 `runtime/tests/suite.*` 目录。
 
 ## 统一管理后台（第十四阶段）
 
@@ -83,6 +83,26 @@ TEST_JOBS=4 bash tests/run-all.sh
 - 旧配置升级：先读取现有数据库里的有效账号哈希，其次才是 `ADMIN_PASSWORD_HASH` 环境变量；即使环境中存在默认 `ADMIN_PASSWORD=admin`，也不重置旧账号。哈希不可还原，因此仅保留旧格式的校验器，首次正确登录或通过已有 Session 修改密码后，事务性保存实际密码到新 `ADMIN_PASSWORD` 设置并退役旧账号记录。旧哈希字段之后不再用于认证，可从本地 `.env` 移除；忘记旧密码须另行明确重置，不会自动改成默认密码。升级前请备份，旧版本回滚使用原备份恢复流程。
 - Session 为随机不透明 Cookie，数据库只存其摘要；默认一小时有效，登录轮换、退出撤销、修改密码撤销全部 Session。Cookie 使用 Secure、HttpOnly、SameSite=Strict，所有写请求验证 CSRF，登录失败有全局限速。仅支持 HTTPS 登录。
 - 浏览器使用 `/admin/api/*` + Session；后台服务端再用 `SERVICE_MANAGEMENT_TOKEN` 调用内部 `/management/*`。不返回 Token、环境变量、完整异常或维护脚本输出。原 `/chat` 和 `/management` Token 认证继续独立工作。
+
+### HTTPS 登录与来源校验
+
+请求链路为浏览器 HTTPS → Nginx TLS 终止 → HTTP Admin 容器。Admin 的两个 Nginx location 保留原始 Host（包括外部端口），覆盖 `X-Forwarded-Proto` 为 Nginx 实际协议；不改写浏览器 Origin。Uvicorn 入口原本已启用代理头信任，Compose 继续只发布 loopback 端口：这条信任边界不能改为公网直连 Admin，也不能直接采信浏览器的 `X-Forwarded-Host`、`X-Forwarded-Port` 或 `Forwarded`。
+
+写请求仍按 Session → 请求体/CSRF → Origin → 业务操作校验。来源按 `(scheme, host, effective_port)` 比较，DNS 大小写和默认 HTTPS `:443` 等价，不把 ASGI 路径前缀作为来源；其他协议、其他主机、其他有效端口，以及空、重复、`null`、带路径/用户信息的 Origin 均拒绝。没有 Origin 的既有客户端仍必须通过 Session 和 CSRF。HTTP 跳转使用配置的 `DOMAIN_HTTPS_PORT`，默认 443 的跳转格式保持不变。
+
+基线测试确认：标准 443、正确转发头的请求原本可登录，不能把任何现场 `origin_rejected` 都归因于代理协议或密码。可复现的问题是 `$host` 丢失非默认端口，以及将 `request.base_url` 直接与 Origin 作字符串比较。旧测试使用 HTTPS TestClient，正常登录没有携带 Origin，未覆盖此链路。修复不涉及账号、已有凭据、数据卷或密码迁移。
+
+真实反代回归使用生产 Uvicorn 启动参数和仓库 Nginx 模板，启动临时 TLS Nginx（测试工具需支持 `-e stderr`，如 1.20+）与 HTTP Uvicorn。域名、密码、证书、端口和数据目录均在测试时生成；证书验证保持开启，不改系统 hosts、DNS、证书或现有 Nginx。覆盖标准/非默认 HTTPS authority、正常登录及改密、恶意来源、伪造转发头、CSRF/Session 和 HTTP 跳转。
+
+```bash
+# 使用真实 nginx 和 openssl（不要指向 tests/fixtures 的替身）。
+ADMIN_TEST_PYTHON="$PWD/runtime/admin-venv/bin/python" \
+TEST_NGINX_BINARY="$(command -v nginx)" \
+TEST_OPENSSL_BINARY="$(command -v openssl)" \
+REQUIRE_ADMIN_PROXY_TEST=true bash tests/admin-proxy-fixture-test.sh
+```
+
+缺少测试工具时仅跳过真实网络部分；设置 `REQUIRE_ADMIN_PROXY_TEST=true` 会改为失败，CI 应启用该选项。更新已有部署需要构建包含修复的新 Admin 镜像，并通过安装器重新渲染/验证/reload 站点；仅 `git pull` 或重启旧镜像不会更新代码和生效中的 Nginx。使用升级模块时须为本地 Admin 构建选择新的固定目标标签，保持原镜像可回滚，不重置密码或数据。
 
 配置 API：内部 `/management/profiles/{ai|prompts|knowledge|channels|runtime}` 支持 GET 列表、POST 创建；`/{id}` 支持 GET、PUT。AI 字段沿用 `model`、`api_base_url`、`api_key_env`；提示词沿用 `system_prompt`、`reply_rules`；知识库沿用 `source`、`max_characters`；渠道仅存 `enabled`、`provider`、`config_ref`；Runtime 仅有 `default` 记录的 `default_service_id`。不接收 API Key / 密码 / Token 字段。后台对应接口位于 `/admin/api/{kind}`，修改请求还需 `X-CSRF-Token`。浏览器从页面表单取得 CSRF，不取得内部认证 Token。
 
