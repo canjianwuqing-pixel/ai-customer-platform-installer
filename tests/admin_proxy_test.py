@@ -152,6 +152,9 @@ class NginxHTTPSFixtures(unittest.TestCase):
     def extra_nginx_servers(self):
         return ""
 
+    def extra_nginx_locations(self):
+        return ""
+
     def start_proxy(self):
         self.certificate = self.directory / "certificate.pem"
         key = self.directory / "certificate.key"
@@ -169,7 +172,7 @@ class NginxHTTPSFixtures(unittest.TestCase):
                   "ADMIN_UPSTREAM_HOST": "127.0.0.1", "AI_ADMIN_HTTP_PORT": str(self.backend_port)}
         site = (ROOT / "templates/domain/chatwoot-https.conf.template").read_text(encoding="utf-8")
         admin = (ROOT / "templates/nginx/admin.conf.template").read_text(encoding="utf-8")
-        site = site.replace("# PLATFORM_ADMIN_LOCATION", admin)
+        site = site.replace("# PLATFORM_ADMIN_LOCATION", admin + self.extra_nginx_locations())
         for name, value in values.items():
             site = site.replace("{{" + name + "}}", value)
         self.assertNotIn("{{", site)

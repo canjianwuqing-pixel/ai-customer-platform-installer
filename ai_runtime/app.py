@@ -1,6 +1,8 @@
 """FastAPI entry point. The internal token guards every generation request."""
 
 import hmac
+import asyncio
+from contextlib import asynccontextmanager
 import logging
 from typing import Annotated
 
@@ -26,9 +28,27 @@ class ChatResponse(BaseModel):
     reply: str
 
 
-def create_app(engine: RuntimeEngine | None = None) -> FastAPI:
+def create_app(engine: RuntimeEngine | None = None, *, chatwoot_transport=None) -> FastAPI:
     engine = engine or RuntimeEngine(ServiceResolver.from_environment())
-    application = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
+    from .chatwoot import ChatwootBridge
+    from .chatwoot_api import webhook_routes
+    bridge = ChatwootBridge(engine, chatwoot_transport)
+
+    @asynccontextmanager
+    async def lifespan(_app):
+        bridge.stopping = asyncio.Event()
+        bridge.wakeup = asyncio.Event()
+        tasks = [asyncio.create_task(bridge.run()) for _ in range(4)]
+        try:
+            yield
+        finally:
+            bridge.stopping.set()
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+    application = FastAPI(docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
+    application.state.chatwoot = bridge
     bearer = HTTPBearer(auto_error=False)
     logger = logging.getLogger("ai_runtime")
     # Third-party HTTP debug logging can include provider URLs and headers.
@@ -64,7 +84,8 @@ def create_app(engine: RuntimeEngine | None = None) -> FastAPI:
     async def chat(body: ChatRequest):
         return await engine.respond(body.message, body.service_id)
 
-    application.include_router(management_router(engine.resolver))
+    application.include_router(management_router(engine.resolver, provider=engine.provider, bridge=bridge))
+    application.include_router(webhook_routes(bridge))
     return application
 
 

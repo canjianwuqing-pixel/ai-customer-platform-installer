@@ -1,0 +1,24 @@
+{% extends "base.html" %}{% block content %}
+<h2>Chatwoot 网站客服接入</h2>
+<p class="hint">每个实例独立绑定一个网站收件箱。请先在客服实例页启用实例并关联模型；提示词和知识库继续使用原配置。不会覆盖收件箱已有的其他机器人。</p>
+<form method="get"><label for="chatwoot-service">客服实例（必选）</label><select id="chatwoot-service" name="service_id" required><option value="">请选择客服实例</option>
+{% for service in services %}<option value="{{ service.id }}" {% if service.id == selected %}selected{% endif %}>{{ service.name }}（{{ service.id }}）</option>{% endfor %}</select><div class="form-actions"><button>查看接入配置</button></div></form>
+{% if notice %}<p class="notice success" role="status">{{ notice }}</p>{% endif %}
+{% if error %}<p class="notice error" role="alert">{{ error }}</p>{% endif %}
+{% if selected %}
+<form method="post" id="chatwoot-connection"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="service_id" value="{{ selected }}"><input type="hidden" name="action" value="connect">
+<div class="form-grid"><div class="field"><label for="chatwoot-url">Chatwoot 网站地址（必填）</label><input id="chatwoot-url" name="base_url" type="url" required value="{{ draft.get('base_url', state.base_url or public_url) }}" maxlength="2048"></div>
+<div class="field"><label for="chatwoot-account">Chatwoot 账户 ID（必填）</label><input id="chatwoot-account" name="account_id" type="number" min="1" max="2147483647" step="1" required value="{{ draft.get('account_id', state.account_id or '') }}"><p class="hint">可在 Chatwoot 后台地址中的 accounts/ 后找到。</p></div>
+<div class="field wide"><label for="chatwoot-token">Chatwoot 管理员 API Token</label><p class="hint">当前 Token：{{ state.token_masked or '尚未配置' }}。使用 Chatwoot 管理员个人资料中的 API Access Token，不是网站 widget Token。</p><input id="chatwoot-token" name="api_token" type="password" autocomplete="new-password" maxlength="4096" {% if not state.configured %}required{% endif %} placeholder="首次填写，之后留空保留原值"><p class="hint">Token 加密保存；机器人 Token 和 Webhook 签名密钥由后端自动取得，均不返回浏览器。</p></div></div>
+<div class="form-actions"><button>保存连接并获取网站收件箱</button></div></form>
+{% if state.configured %}<form method="post" id="chatwoot-bind"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="service_id" value="{{ selected }}"><input type="hidden" name="action" value="bind">
+<label for="chatwoot-inbox">网站收件箱（必选）</label><select id="chatwoot-inbox" name="inbox_id" required><option value="">请选择已存在的网站收件箱</option>{% for inbox in inboxes %}<option value="{{ inbox.id }}" {% if inbox.id == state.inbox_id %}selected{% endif %}>{{ inbox.name }}（{{ inbox.id }}）</option>{% endfor %}</select>
+<p class="hint">绑定后创建新会话将进入机器人待处理状态；AI 停用、访客要求人工或处理失败时转为人工。Webhook 地址由当前 HTTPS 网站自动配置。</p><div class="form-actions"><button>{{ '检查并重新绑定' if state.bot_id else '绑定收件箱并启用 AI' }}</button></div></form>{% endif %}
+{% if state.bot_id %}<p class="notice {{ 'success' if state.enabled else '' }}">当前实例 AI：{{ '已启用' if state.enabled else '已停用（新消息转人工）' }} · 收件箱 ID：{{ state.inbox_id }}</p>
+<form method="post"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="service_id" value="{{ selected }}"><input type="hidden" name="action" value="toggle"><input type="hidden" name="enabled" value="{{ 'false' if state.enabled else 'true' }}"><button class="secondary">{{ '停用 AI' if state.enabled else '启用 AI' }}</button></form>
+{% if state.last_error %}<p class="notice error">最近处理错误：{{ error_message(state.last_error) }}</p>{% endif %}
+<h2>会话人工接管状态</h2><p class="hint">访客明确要求人工或人工公开回复后，AI 会暂停；在 Chatwoot 处理后，点击“恢复 AI”，仅对之后的新访客消息启用。恢复会将会话重新分配给机器人并设为待处理，不补发旧消息。</p>
+<div class="table-wrap"><table><thead><tr><th>会话 ID</th><th>状态</th><th>操作</th></tr></thead><tbody>{% for conversation in state.conversations %}<tr><td>{{ conversation.id }}</td><td>{{ error_message(conversation.reason) if conversation.paused else 'AI 可处理新消息' }}</td><td>{% if conversation.paused and state.enabled %}<form method="post"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="service_id" value="{{ selected }}"><input type="hidden" name="action" value="resume"><input type="hidden" name="conversation_id" value="{{ conversation.id }}"><button class="secondary small">恢复 AI</button></form>{% endif %}</td></tr>{% else %}<tr><td colspan="3">暂无已接入会话。</td></tr>{% endfor %}</tbody></table></div>
+{% for item in state.errors %}<p class="notice error">会话 {{ item.conversation_id }} · 消息 {{ item.message_id }}：{{ error_message(item.error) }}</p>{% endfor %}
+{% endif %}{% endif %}
+{% endblock %}

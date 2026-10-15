@@ -15,7 +15,7 @@ import platform_admin.app as admin_app
 from platform_admin.clients import InternalClient
 from ai_runtime.app import create_app as runtime_app
 from ai_runtime.config import ServiceResolver
-from ai_runtime.engine import RuntimeEngine
+from ai_runtime.engine import ChatProvider, RuntimeEngine
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -36,7 +36,9 @@ class VisualBrowserFixtures(unittest.TestCase):
             (config.parent / "domains").mkdir()
             (config.parent / "domains" / "domains.yaml").write_text("version: 1\ndomains: []\n", encoding="utf-8")
             self.resolver = ServiceResolver(config, root / "runtime-data", {**env, "AI_API_BASE_URL": "https://provider.example.test/v1"})
-            self.runtime = runtime_app(RuntimeEngine(self.resolver))
+            protocol = getattr(self, "protocol", None)
+            self.runtime = runtime_app(RuntimeEngine(self.resolver, ChatProvider(httpx.MockTransport(protocol.provider)) if protocol else None),
+                                       chatwoot_transport=httpx.MockTransport(protocol) if protocol else None)
             self.api = TestClient(self.runtime, headers={"authorization": "Bearer " + env["SERVICE_MANAGEMENT_TOKEN"]})
             self.addCleanup(self.api.close)
             management = InternalClient("http://runtime.test", env["SERVICE_MANAGEMENT_TOKEN"], httpx.ASGITransport(app=self.runtime))

@@ -1,6 +1,6 @@
 """Resolve the existing services.yaml schema into request-local runtime data."""
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from collections.abc import Mapping
 import os
@@ -125,6 +125,7 @@ class RuntimeConfig:
     reply_rules: tuple[str, ...] = field(repr=False)
     knowledge_source: Path | None = field(repr=False)
     knowledge_max_characters: int
+    credential_ref: str = field(default="", repr=False)
 
 
 class ServiceResolver:
@@ -223,11 +224,11 @@ class ServiceResolver:
         ai = self._profile("ai", entry["ai_config"], {"model", "api_base_url", "api_key_env"}, profiles=profiles)
         prompt = self._profile("prompts", entry["prompt_config"], {"system_prompt", "reply_rules"}, profiles=profiles)
         knowledge = self._profile("knowledge", entry["knowledge_config"], {"source", "max_characters"}, profiles=profiles)
-        return self._runtime_config(entry["id"], ai, prompt, knowledge)
+        return replace(self._runtime_config(entry["id"], ai, prompt, knowledge), credential_ref=entry["ai_config"])
 
     def _runtime_config(self, service_id, ai, prompt, knowledge, *, legacy=False):
         model = _text(self.env.get("AI_MODEL", "") if legacy else ai.get("model"))
-        base_url = _text(ai.get("api_base_url", self.env.get("AI_API_BASE_URL", ""))).rstrip("/")
+        base_url = _text(ai.get("api_base_url") or self.env.get("AI_API_BASE_URL") or "https://api.openai.com/v1").rstrip("/")
         try:
             parsed_url = urlsplit(base_url)
             parsed_url.port
@@ -261,7 +262,13 @@ class ServiceResolver:
         )
 
     def credential(self, config: RuntimeConfig) -> str:
-        key = self.env.get(config.api_key_env, "")
-        if not key or "\n" in key or "\r" in key:
+        key = None
+        if config.credential_ref:
+            from .vault import CredentialVault
+            key = CredentialVault(self).get("model", config.credential_ref)
+        if key is None:
+            key = self.env.get(config.api_key_env, "")
+        if (not key or "\n" in key or "\r" in key
+                or any(key == self.env.get(name) for name in RESERVED_CREDENTIALS)):
             raise RuntimeFailure("provider_credentials_missing")
         return key

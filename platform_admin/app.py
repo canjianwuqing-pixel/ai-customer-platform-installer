@@ -119,16 +119,22 @@ def create_app(env=None, management=None, maintenance=None):
         # Keep the origin for our forms, but send no Referer across origins.
         response.headers.update({"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff",
             "Referrer-Policy": "same-origin", "Content-Security-Policy": "default-src 'none'; style-src 'self' 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'"})
-        if request.url.path in {"/admin/manage/knowledge", "/admin/knowledge"}:
+        if request.url.path in {"/admin/manage/knowledge", "/admin/knowledge"} or request.url.path.startswith("/admin/edit/ai/"):
             response.headers["Content-Security-Policy"] += "; script-src 'self'"
+        if request.url.path.startswith("/admin/edit/ai/"):
+            response.headers["Content-Security-Policy"] += "; connect-src 'self'"
         return response
 
     @app.exception_handler(AdminError)
     async def failure(request, error):
-        if error.code == "authentication_required" and not request.url.path.startswith("/admin/api/"):
+        is_api = request.url.path.startswith(("/admin/api/", "/admin/models/"))
+        if error.code == "authentication_required" and not is_api:
             return RedirectResponse("/admin/login", status_code=303)
-        if request.url.path.startswith("/admin/api/"):
-            return JSONResponse({"error": error.code}, status_code=error.status)
+        if is_api:
+            payload = {"error": error.code}
+            if request.url.path.startswith("/admin/models/"):
+                payload["message"] = forms.error_message(error.code)
+            return JSONResponse(payload, status_code=error.status)
         return HTMLResponse(templates.get_template("error.html").render(code=error.code), status_code=error.status)
 
     @app.exception_handler(RequestValidationError)
@@ -245,6 +251,83 @@ def create_app(env=None, management=None, maintenance=None):
         ensure_public(result)
         return result
 
+    async def integration_call(method, path, data=None):
+        if data is not None:
+            ensure_public(data)
+        result = await management.call(method, "/management/" + path, data)
+        ensure_public(result)
+        return result
+
+    @app.get("/admin/static/models.js")
+    def models_script(request: Request):
+        session(request)
+        return FileResponse(Path(__file__).parent / "static/models.js", media_type="text/javascript")
+
+    @app.post("/admin/models/{action}")
+    async def model_action(action: str, request: Request):
+        _, data = await mutation(request)
+        if action not in {"discover", "test"}:
+            raise AdminError("not_found", 404)
+        return await integration_call("POST", "models/" + action, data)
+
+    async def render_chatwoot(csrf, selected, public_url, *, error="", notice="", status=200, draft=None):
+        services = await public_call("services", "GET")
+        state, inboxes = {}, []
+        if selected:
+            if not re.fullmatch(r"[a-z][a-z0-9_-]{0,63}", selected):
+                raise AdminError("invalid_identifier", 422)
+            state = await integration_call("GET", "chatwoot/" + selected)
+            if state.get("configured"):
+                try:
+                    inboxes = await integration_call("GET", "chatwoot/" + selected + "/inboxes")
+                except AdminError as exc:
+                    error = error or forms.error_message(exc.code)
+        response = page("chatwoot.html", csrf, selected=selected, services=services, state=state,
+                        inboxes=inboxes, public_url=public_url, error=error, notice=notice, draft=draft or {})
+        response.status_code = status
+        return response
+
+    @app.get("/admin/chatwoot")
+    async def chatwoot_page(request: Request):
+        _, csrf = session(request)
+        return await render_chatwoot(csrf, request.query_params.get("service_id", ""),
+                                    request.url.scheme + "://" + request.headers["host"],
+                                    notice="操作成功。" if request.query_params.get("saved") == "1" else "")
+
+    @app.post("/admin/chatwoot")
+    async def chatwoot_save(request: Request):
+        _, csrf = session(request)
+        _, data = await mutation(request)
+        ensure_public(data)
+        if not all(isinstance(value, str) for value in data.values()):
+            raise AdminError("invalid_request", 422)
+        action, sid = data.get("action", ""), data.get("service_id", "")
+        if not re.fullmatch(r"[a-z][a-z0-9_-]{0,63}", sid):
+            raise AdminError("invalid_identifier", 422)
+        path = "chatwoot/" + sid
+        origin = request.url.scheme + "://" + request.headers["host"]
+        try:
+            if action == "connect" and set(data) == {"action", "service_id", "base_url", "account_id", "api_token"}:
+                if not re.fullmatch(r"[1-9][0-9]{0,9}", data["account_id"]):
+                    raise AdminError("invalid_chatwoot_identifier", 422)
+                await integration_call("PUT", path + "/connection", {"base_url": data["base_url"], "account_id": int(data["account_id"]), "api_token": data["api_token"]})
+            elif action == "bind" and set(data) == {"action", "service_id", "inbox_id"}:
+                if not re.fullmatch(r"[1-9][0-9]{0,9}", data["inbox_id"]):
+                    raise AdminError("invalid_chatwoot_identifier", 422)
+                await integration_call("POST", path + "/bind", {"inbox_id": int(data["inbox_id"]), "public_url": origin})
+            elif action == "toggle" and set(data) == {"action", "service_id", "enabled"} and data["enabled"] in {"true", "false"}:
+                await integration_call("PUT", path + "/enabled", {"enabled": data["enabled"] == "true"})
+            elif action == "resume" and set(data) == {"action", "service_id", "conversation_id"} and re.fullmatch(r"[1-9][0-9]{0,9}", data["conversation_id"]):
+                await integration_call("POST", path + "/conversations/" + data["conversation_id"] + "/resume", {})
+            else:
+                raise AdminError("invalid_request", 422)
+        except AdminError as exc:
+            if exc.code in {"sensitive_input_rejected", "unsafe_upstream_response"}:
+                raise
+            return await render_chatwoot(csrf, sid, origin, error=forms.error_message(exc.code), status=exc.status,
+                                         draft={key: data[key] for key in ("base_url", "account_id") if key in data})
+        return RedirectResponse("/admin/chatwoot?service_id=" + sid + "&saved=1", status_code=303)
+
     @app.get("/admin/static/knowledge.js")
     def knowledge_script(request: Request):
         session(request)
@@ -337,7 +420,10 @@ def create_app(env=None, management=None, maintenance=None):
                 options[field.name] = forms.choices(field, records, record.get(field.name, ""))
         if rows is None:
             rows = record.get("reply_rules", [])
-        response = page("edit.html", csrf, kind=kind, key=key, record=record,
+        key_status = {}
+        if kind == "ai" and key != "_new":
+            key_status = await integration_call("GET", "models/" + key + "/credential")
+        response = page("edit.html", csrf, kind=kind, key=key, record=record, key_status=key_status,
                         identity=forms.identity(kind), fields=forms.FIELDS[kind], options=options,
                         rows=rows or [""], error=error, invalid=invalid)
         response.status_code = status
@@ -360,6 +446,9 @@ def create_app(env=None, management=None, maintenance=None):
         _, data = await mutation(request, max_fields=72, max_bytes=4_194_304)
         resource_path(kind, key if key != "_new" else "")
         ensure_public(data)  # Never echo credentials even on a local form error.
+        api_key = data.pop("api_key", "") if kind == "ai" else ""
+        if not isinstance(api_key, str):
+            raise AdminError("invalid_request", 422)
         if kind == "runtime" and key == "_new":
             raise AdminError("invalid_request", 422)
         creating = key == "_new"
@@ -400,7 +489,11 @@ def create_app(env=None, management=None, maintenance=None):
         if not creating:
             record.pop("id" if kind != "domains" else "domain", None)
         try:
-            await public_call(kind, "POST" if creating else "PUT", "" if creating else key, record)
+            if kind == "ai" and api_key:
+                await integration_call("POST", "models/save?create=" + ("true" if creating else "false"),
+                    {"id": record.get("id", key) if creating else key, "profile": {name: record.get(name, forms.defaults("ai")[name]) for name in ("model", "api_base_url", "api_key_env")}, "api_key": api_key})
+            else:
+                await public_call(kind, "POST" if creating else "PUT", "" if creating else key, record)
         except AdminError as error:
             if error.code in {"sensitive_input_rejected", "unsafe_upstream_response"}:
                 raise

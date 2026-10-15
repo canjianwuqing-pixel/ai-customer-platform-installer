@@ -1,0 +1,13 @@
+    # Only the HMAC-authenticated Agent Bot webhook is public. Management and
+    # Runtime chat APIs are deliberately not proxied by this location.
+    location ~ "^/integrations/chatwoot/[a-z][a-z0-9_-]{0,63}/webhook$" {
+        if ($scheme = http) { return 301 https://$host{{HTTPS_PORT_SUFFIX}}$request_uri; }
+        limit_except POST { deny all; }
+        client_max_body_size 1m;
+        proxy_pass http://{{AI_RUNTIME_UPSTREAM_HOST}}:{{AI_SERVICE_HTTP_PORT}};
+        proxy_set_header Host $http_host;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header Authorization "";
+        proxy_redirect off;
+    }

@@ -1,1 +1,1 @@
-{% extends "base.html" %}{% block content %}<h2>平台管理</h2><p>当前管理员：{{ username }}</p><p>这里是平台唯一管理入口。客服实例、域名、AI 运行配置与系统维护共用同一登录会话。</p><p class="hint">域名绑定仅管理路由数据，不执行 DNS 或证书操作。知识库与渠道页面仅编辑配置引用，不连接外部平台。</p>{% endblock %}
+{% extends "base.html" %}{% block content %}<h2>平台管理</h2><p>当前管理员：{{ username }}</p><p>这里是平台唯一管理入口。客服实例、域名、AI 运行配置与系统维护共用同一登录会话。</p><p class="hint">先配置 AI 模型并关联客服实例，再在“Chatwoot 接入”绑定已有网站收件箱。知识正文可在知识库页面直接编辑。域名绑定仅管理路由数据，不执行 DNS 或证书操作；渠道配置页继续保留通用配置引用。</p>{% endblock %}

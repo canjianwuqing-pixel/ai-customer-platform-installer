@@ -76,6 +76,17 @@ nginx_render_admin_location() {
       -e "s|{{AI_ADMIN_HTTP_PORT}}|${AI_ADMIN_HTTP_PORT}|g" \
       -e "s|{{HTTPS_PORT_SUFFIX}}|${https_port_suffix}|g" \
       "${INSTALLER_ROOT}/templates/nginx/admin.conf.template" >"${snippet}" || return 1
+    if [[ "${AI_RUNTIME_BUILD:-false}" == true ]]; then
+      if ! validation_is_bind_address "${AI_SERVICE_BIND_ADDRESS:-}" || ! validation_is_port "${AI_SERVICE_HTTP_PORT:-}"; then
+        rm -f -- "${snippet}" "${combined}"
+        log_error 'AI Runtime webhook upstream configuration is invalid.'
+        return 1
+      fi
+      sed -e "s|{{AI_RUNTIME_UPSTREAM_HOST}}|${AI_SERVICE_BIND_ADDRESS}|g" \
+        -e "s|{{AI_SERVICE_HTTP_PORT}}|${AI_SERVICE_HTTP_PORT}|g" \
+        -e "s|{{HTTPS_PORT_SUFFIX}}|${https_port_suffix}|g" \
+        "${INSTALLER_ROOT}/templates/nginx/chatwoot-ai.conf.template" >>"${snippet}" || return 1
+    fi
   fi
   awk -v snippet="${snippet}" '/# PLATFORM_ADMIN_LOCATION/ {while ((getline line < snippet) > 0) print line; close(snippet); next} {print}' \
     "${output_file}" >"${combined}" || return 1

@@ -27,7 +27,7 @@ from platform_admin.maintenance_worker import make_handler
 from ai_runtime.app import create_app as runtime_app
 from ai_runtime.config import ServiceResolver
 from ai_runtime.engine import RuntimeEngine
-from ai_runtime.management_store import ManagementStore, SCHEMA_VERSION
+from ai_runtime.management_store import ManagementStore, SCHEMA_VERSION, MIGRATIONS
 from modules.admin import readiness
 
 
@@ -258,10 +258,15 @@ class AdminFixtures(unittest.TestCase):
 
     def test_v1_database_migrates_and_bad_profile_edit_rolls_back(self):
         store = ManagementStore(self.resolver)
-        store.migrate_yaml()
+        store._check_path(True)
         with closing(sqlite3.connect(store.path)) as db:
-            db.execute("DROP TABLE runtime_profiles")
+            # Build a genuine v1 database. Downgrading only user_version on a
+            # current schema would leave newer tables behind and is not a
+            # supported historical deployment or a valid migration fixture.
+            for sql in MIGRATIONS[1]:
+                db.execute(sql)
             db.execute("PRAGMA user_version=1")
+            db.commit()
         self.login()
         self.assertEqual(self.post("/admin/api/ai", {"id": "model_a", "model": "alpha"}).status_code, 201)
         self.create_service(enabled=True)

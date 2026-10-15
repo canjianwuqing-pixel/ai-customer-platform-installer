@@ -100,7 +100,7 @@ class DomainPatch(InputModel):
         return self
 
 
-def management_router(resolver) -> APIRouter:
+def management_router(resolver, *, provider=None, bridge=None) -> APIRouter:
     store = ManagementStore(resolver)
     bearer = HTTPBearer(auto_error=False)
 
@@ -118,6 +118,11 @@ def management_router(resolver) -> APIRouter:
     router = APIRouter(prefix="/management", dependencies=[Depends(authenticate)])
     from .profile_api import profile_router
     router.include_router(profile_router(resolver))
+    from .model_api import model_router
+    router.include_router(model_router(resolver, provider))
+    if bridge is not None:
+        from .chatwoot_api import management_routes
+        router.include_router(management_routes(bridge))
     from .knowledge import KnowledgeStore, MAX_CONTENT_BYTES
     knowledge = KnowledgeStore(resolver)
 

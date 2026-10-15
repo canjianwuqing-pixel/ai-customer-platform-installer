@@ -51,7 +51,7 @@ def validate_profile(resolver, kind, key, body):
         record = MODELS[kind].model_validate(body).model_dump()
         if kind == "ai":
             if not record["api_base_url"]:
-                record["api_base_url"] = resolver.env.get("AI_API_BASE_URL", "")
+                record["api_base_url"] = resolver.env.get("AI_API_BASE_URL") or "https://api.openai.com/v1"
             resolver._runtime_config("validation", record, {}, {})
         elif kind == "prompts":
             if any(not rule.strip() or len(rule) > 4000 for rule in record["reply_rules"]):

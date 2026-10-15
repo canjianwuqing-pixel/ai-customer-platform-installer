@@ -13,7 +13,7 @@
 - 可选的 FastAPI AI Service 与 AI 管理后台 Docker Compose Stack；
 - 基于 Service Instance 的 AI Runtime 请求路由与实例上下文隔离；
 - AI 服务独立数据卷、环回地址默认绑定和敏感日志禁用约束；
-- Chatwoot Webhook、Secret 与 Inbox 集成参数预留；
+- Chatwoot 网站收件箱真实 API 接入、签名 Webhook、AI 多轮回复与人工接管；
 - 带版本、校验和、保留策略及显式恢复确认的本地备份与恢复；
 - 带升级前备份、版本记录、健康检查和失败自动恢复的安全升级与回滚；
 - Chatwoot 的 Nginx HTTP 反向代理与 WebSocket 支持；
@@ -37,7 +37,7 @@
 
 Chatwoot、pgvector/PostgreSQL 和 Redis 镜像均通过 `.env` 使用明确版本标签。PostgreSQL 与 Redis 不发布宿主机端口；Rails 默认只绑定到 `.env` 配置的本地地址，后续由 Nginx 模块接入。
 
-AI Service 和统一后台不是 Chatwoot 基础安装必选项。未配置 AI 镜像且未启用统一后台时，安装器跳过全部 AI 步骤。启用统一后台参见下一节；高级用户仍可覆盖固定标签或 digest 的镜像。OpenAI API Key 不属于安装必填项，也不通过浏览器表单写入；仅由 Runtime 的受保护环境文件提供，后台只选择模型与凭据环境变量引用。
+AI Service 和统一后台不是 Chatwoot 基础安装必选项。未配置 AI 镜像且未启用统一后台时，安装器跳过全部 AI 步骤。启用统一后台参见下一节；高级用户仍可覆盖固定标签或 digest 的镜像。OpenAI API Key 不属于安装必填项，可在统一后台安全配置，也兼容 Runtime 已有环境变量凭据。
 
 ## 统一配置生命周期与旧部署升级
 
@@ -75,13 +75,13 @@ TEST_JOBS=4 bash tests/run-all.sh
 
 页面使用中文、响应式的服务端可视化表单，不需要手写 JSON，不引入前端框架。知识库页面仅使用同源静态脚本保护未保存草稿和确认清空，不在浏览器保存正文或内部 Token。可以查看、创建、编辑、启用/停用客服实例；管理域名绑定；管理 AI 模型、系统提示词、回复规则、Runtime 默认实例、知识库与渠道配置引用。域名页只修改绑定数据，不修改 DNS 或申请证书；知识库不提供文件上传/向量索引，渠道页不建立外部平台连接。
 
-表单严格对应已有 API，不改变 `/admin/api/*`、Service Management API 或数据库结构：
+普通表单沿用已有 profile API；密钥和 Chatwoot 接入使用独立的受认证接口，不将敏感字段加入普通配置响应：
 
 | 页面 | 实际支持的字段 / 操作 |
 | --- | --- |
 | 客服实例 | 手动填写 `id`、`name`、启用开关及四类配置下拉关联；创建后 ID 只读 |
 | 域名管理 | `domain`、客服实例绑定、启用状态、默认入口；域名标识创建后只读 |
-| AI 模型 | 配置 ID、`model`、`api_base_url`、`api_key_env`（仅环境变量名，不是密钥值） |
+| AI 模型 | 配置 ID、任意模型 ID、API Base URL、可选环境变量引用；另提供只写 Key、前缀显示、动态模型查询和实际连接测试 |
 | 提示词 | 配置 ID、`system_prompt`、最多 64 条独立回复规则；每条可多行，支持添加、删除 |
 | 知识库 | 配置 ID、`source` 相对文件路径、`max_characters`（1–100000） |
 | 渠道 | 配置 ID、启用开关、`provider` 自由文本、`config_ref` 引用 |
@@ -89,7 +89,41 @@ TEST_JOBS=4 bash tests/run-all.sh
 
 下拉数据由 Admin 服务端实时读取真实管理 API，允许为空的关联提供“不选择”。旧配置中不在当前列表的引用仍显示原值并明确提示，不会静默清空；关联列表读取失败不会渲染一个可误保存的空表单。保存前读取最新已有记录并合并提交字段，保留未提交的合法字段、回复规则分组及未修改文本的换行。新增、编辑和启用/停用保留现有 API 的引用、唯一性和运行状态校验；失败显示中文原因并保留非敏感输入，成功后回到列表显示保存反馈。
 
-现有配置 API **不支持**为模型/提示词/知识库/渠道增加独立名称、温度/最大输出量等模型参数，或查询固定渠道类型目录，因此不提供假控件；这些配置以现有 ID 区分。知识正文通过下述独立的实例正文接口管理；渠道只保存引用，不建立外部连接。密钥值和内部 Token 不进入表单，下拉请求继续由服务端认证；原 Session、CSRF、Origin、安全 Cookie 和 CSP 均保留。HTML 配置编辑入口保留 4 MiB、72 项限制；知识正文入口单独限制 URL 编码请求与 UTF-8 正文大小，JSON 配置 API、登录及其他入口的既有请求限制保持不变。
+现有配置 API **不支持**为模型/提示词/知识库/渠道增加独立名称、温度/最大输出量等模型参数，或查询固定渠道类型目录，因此不提供假控件；这些配置以现有 ID 区分。知识正文通过下述独立的实例正文接口管理；渠道页仍只保存引用，实际网站收件箱接入使用“Chatwoot 接入”页。已存完整 Key、机器人 Token 和内部 Token 不回显；原 Session、CSRF、Origin、安全 Cookie 和 CSP 均保留。仅模型页允许同源脚本连接自己的 Admin 后端，浏览器不直接调用提供商或内部 API。HTML 配置编辑入口保留 4 MiB、72 项限制；其他入口沿用既有请求限制。
+
+### OpenAI / 兼容接口与网站客服自动回复
+
+使用仓库内 Runtime 和统一 Admin 时，可在同一 `/admin` 完成接入，不需要 SSH 填写提供商密钥：
+
+1. 在“AI 模型”创建配置，填写自选 API Base URL（留空使用已有 `AI_API_BASE_URL`，未设置则使用官方 `https://api.openai.com/v1`）及 Key。点击“获取模型列表”，按当前地址和凭据查询；可下拉选择，也可直接填写任意模型 ID。接口不支持模型查询时仍可手动保存，没有固定名单或固定模型。点击“测试模型连接”会实际请求当前选择的模型，可能产生少量调用费用。
+2. 保存后仅显示 Key 前 8 位与星号。编辑时 Key 留空保留，输入新 Key 即替换；不要求每次编辑重新填写。未后台保存 Key 时兼容 `api_key_env` 指向的已有环境变量。每个实例通过原 `ai_config` 关联自己的模型配置；保存修改后下一条消息即生效，不需重建容器。
+3. 在“客服实例”关联原有提示词、回复规则和知识库并启用实例。在“Chatwoot 接入”选择实例，输入 Chatwoot 网站地址、账户 ID、该账户**管理员**的 API Access Token；真实查询已有网站收件箱，再选择绑定。不使用 widget Token，不将 Agent Bot Token 误作可读取消息历史的用户 Token。
+4. 后端创建账户级 Agent Bot，将其绑定到所选网站收件箱，并自动设置当前 HTTPS 入口下的 Webhook。Chatwoot 必须能访问此 HTTPS 地址。一个实例绑定一个网站收件箱，同一收件箱不能被两个实例复用；已有其他机器人时拒绝覆盖。V1 已绑定网站/账户/收件箱保持稳定，允许更换同一连接的管理员 Token；其他入口使用独立实例，不进行隐式搬迁。
+5. 新访客会话由 Chatwoot 置为 `pending` 并分配机器人。Runtime 只处理经过签名认证、绑定校验的访客公开文本新消息，再从账户 API 读取实际消息，按 `service_id` 加载模型、提示词和实例独立知识正文，将公开回复通过机器人消息 API 发回原会话。现有已开放的人工会话不会被安装器强制抢回。
+
+模型查询使用 [OpenAI Models API](https://developers.openai.com/api/reference/resources/models/methods/list)，生成与测试沿用 [Chat Completions 协议](https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create)。兼容提供同等协议的服务；不假设仅支持 Responses 等其他协议的接口可以直接工作。普通 profile API 的 `model` / `api_base_url` / `api_key_env` 字段契约不变。新内部接口（全部使用现有 `SERVICE_MANAGEMENT_TOKEN`）为 `/management/models/save`（配置及可选只写 Key 同事务保存）、`/discover`、`/test` 和 `/{profile_id}/credential`（仅掩码元数据）；浏览器仅访问受 Session、Origin、CSRF 保护的 `/admin/models/*` 与原配置表单。
+
+Chatwoot 接口依据 **v4.18.0** 源码核对：使用 [`api_access_token` 权限规则](https://github.com/chatwoot/chatwoot/blob/v4.18.0/app/controllers/concerns/access_token_auth_helper.rb)、[网站收件箱绑定接口](https://github.com/chatwoot/chatwoot/blob/v4.18.0/app/controllers/api/v1/accounts/inboxes_controller.rb)和[账户机器人接口](https://github.com/chatwoot/chatwoot/blob/v4.18.0/app/controllers/api/v1/accounts/agent_bots_controller.rb)。账户管理员 Token 用于读取历史与配置，机器人 Token 用于公开回复和转人工。没有假设账户普通 Webhook 具备签名：这里使用 Agent Bot 的真实 [`X-Chatwoot-Timestamp` / `X-Chatwoot-Signature`](https://github.com/chatwoot/chatwoot/blob/v4.18.0/lib/webhooks/trigger.rb)，校验原始请求体 HMAC、5 分钟时间窗口、账户与收件箱，之后才持久化消息 ID。Nginx 只公开 `/integrations/chatwoot/{service_id}/webhook` 的 POST，拒绝匿名/无效签名；管理 API 和 Runtime `/chat` 不对公网转发。
+
+多轮历史只从当前账户、收件箱、会话读取，最多 20 条历史、合计 24000 字符，单条截断；排除私有备注、活动消息及非本实例机器人回复。系统提示词、原回复规则和知识库 `max_characters` 保持有效。已知凭据从发送上下文及回复中脱敏。不会建立跨访客或跨实例的共享对话缓存。
+
+### 人工接管与失败处理
+
+访客明确说“转人工”等请求，或人工客服公开回复后，Runtime 持久化暂停标志，并使用 Chatwoot 的[机器人转人工状态接口](https://github.com/chatwoot/chatwoot/blob/v4.18.0/app/controllers/api/v1/accounts/conversations_controller.rb)将机器人待处理会话转为 `open`，交由收件箱已有人工/自动分配规则。人工消息、私有备注和 AI 自身消息不会触发 AI 回复。后台可逐实例停用 AI；下一条新消息转人工。暂停不会因新访客消息、容器重启或仅切换会话状态而自动解除。
+
+管理员在“Chatwoot 接入”的会话列表点击“恢复 AI”，调用实际[分配接口](https://github.com/chatwoot/chatwoot/blob/v4.18.0/app/controllers/api/v1/accounts/conversations/assignments_controller.rb)重新分配机器人并设为 `pending`，仅处理此后新消息，不补发接管期间旧消息。生成后发送前再次检查人工状态；外部系统无法原子锁定人工点击与消息 POST，极短的并发窗口仍须在真实业务验收中观察。
+
+Webhook 接收后立即入持久队列，去重键为实例 + 会话 + 消息 ID；最多 3 次有限退避重试、4 个受限工作任务，同一会话按消息 ID 串行。持久化接收失败返回 500，以匹配 Chatwoot v4.18 Agent Bot 仅重试 429/500、最多 3 次的实际策略。读失败/生成失败不会无限重试，最终暂停并尽力转人工。Chatwoot 消息创建 API 没有幂等保证：发送前记录 `sending`，在消息 `content_attributes` 写入回复标记。若超时/5xx，先查询该标记；无法确认时**不盲目重发**，暂停并显示“发送结果待人工核对”，请在 Chatwoot 核对后恢复 AI。断电后的 `sending` 也只核对，不重发；最迟在 5 分钟租约后接续。恢复旧备份后若记录过旧（24 小时）或首个 100 条后续消息页无法排除已发送回复，也转人工，不冒险重复发送。不声称跨系统绝对 exactly-once。
+
+### 密钥持久化、升级与验收边界
+
+提供商 Key、Chatwoot 管理员 Token、机器人 Token / 签名 Secret 使用 Fernet 加密，存入现有 Runtime `ai_service_data` 卷内 `management/core.sqlite3` 的新增表；随机加密密钥位于同卷 `management/vault.key`（目录 `0700`、文件 `0600`）。普通 GET 配置不含完整凭据；页面仅回显允许的前缀掩码。丢失加密密钥时拒绝自动重建覆盖，必须恢复对应备份。加密保护与配置隔离不等于抵御拥有完整数据卷权限的服务器管理员。
+
+schema 2 → 3 是事务性追加表迁移，不重写原 Service、Domain、知识库或 Chatwoot 业务数据。重复安装不清空数据卷。现有备份/恢复已归档整个 Runtime 数据卷，包含 SQLite、加密密钥、队列、绑定、暂停状态及知识正文；恢复必须保留两者配套，备份本身含解密能力和 `.env`，仍须作为敏感资料保护，不提交 Git。升级请按既有机制给本地 Runtime/Admin 选择**新的固定目标镜像标签**，重建两个组件并应用随附 Nginx 模板，不要仅复用旧镜像标签；原凭据和 Secret 不重置。外部自定义 Runtime 镜像须自行实现这些扩展接口。
+
+自动化新增 `tests/openai-chatwoot-fixture-test.sh`：模拟提供商与按 v4.18.0 协议构造的 Chatwoot，覆盖 Key 创建/更换/前缀、动态模型/手动回退、选定模型测试、真实 HTTPS Nginx Webhook、Chromium 桌面/手机后台、多轮隔离、签名/重复投递、有限重试、人工接管/恢复；安装器 fixture 用实际 tar 备份验证知识正文、密钥和绑定在重复安装、升级及恢复后保留。模拟访客消息查询证明回复进入原会话，但**不是运行真实 Chatwoot widget 的联网验收**。
+
+最终需在 Ubuntu 服务器由用户填入真实 Key：确认模型连接成功、Chatwoot 可投递 HTTPS 签名 Webhook、访客窗口实际收到 AI 回复、连续提问隔离、转人工/恢复、真实容器重启及备份恢复。没有真实 Key、Chatwoot 服务或 Ubuntu Docker 主机时，不宣称这些真实端到端验证已通过。
 
 ### 按客服实例编辑知识正文
 
@@ -155,7 +189,7 @@ REQUIRE_ADMIN_BROWSER_TEST=true bash tests/admin-browser-fixture-test.sh
 
 配置 API：内部 `/management/profiles/{ai|prompts|knowledge|channels|runtime}` 支持 GET 列表、POST 创建；`/{id}` 支持 GET、PUT。AI 字段沿用 `model`、`api_base_url`、`api_key_env`；提示词沿用 `system_prompt`、`reply_rules`；知识库沿用 `source`、`max_characters`；渠道仅存 `enabled`、`provider`、`config_ref`；Runtime 仅有 `default` 记录的 `default_service_id`。不接收 API Key / 密码 / Token 字段。后台对应接口位于 `/admin/api/{kind}`，修改请求还需 `X-CSRF-Token`。浏览器从页面表单取得 CSRF，不取得内部认证 Token。
 
-profile API 采用与现有配置相同的 SQLite 覆盖方式，不重写 YAML：API profile > 原 profile YAML；Runtime 默认实例为 API default > `AI_DEFAULT_SERVICE_ID` > 唯一启用实例。schema 从 1 事务性迁移至 2，原 Service / Domain 数据保留，下一次 Runtime 请求读取新配置。原来的单实例环境变量模式继续有效。
+profile API 采用与现有配置相同的 SQLite 覆盖方式，不重写 YAML：API profile > 原 profile YAML；Runtime 默认实例为 API default > `AI_DEFAULT_SERVICE_ID` > 唯一启用实例。schema 按版本事务性迁移至 3，原 Service / Domain / profile 数据保留，下一次 Runtime 请求读取新配置。原来的单实例环境变量模式继续有效。
 
 ### 后台系统维护
 
@@ -225,7 +259,7 @@ services:
 
 省略 `service_id` 时，优先使用 API Runtime default 配置，其次为环境变量 `AI_DEFAULT_SERVICE_ID`；未指定且只有一个启用实例时使用该实例。多个实例启用时必须明确设置默认实例。只有实例集合完全为空时，才使用已有的 `AI_MODEL`、`OPENAI_API_KEY` 环境变量，以及可选的 `AI_SYSTEM_PROMPT` 和 `AI_API_BASE_URL`，保留单实例环境变量模式。显式无效、未知、禁用实例或缺失配置会返回明确错误，不会借用其他实例配置。
 
-Runtime 每次请求独立加载默认配置和用户覆盖配置，不保存共享对话上下文；知识文件限制在对应实例的数据目录内。API Key 仅从环境变量读取，配置/请求校验错误及上游错误均返回错误码，不输出完整配置、消息内容或上游响应。多实例隔离是运行配置与上下文隔离；未来的多租户权限管理仍需单独实现。
+Runtime 每次请求独立加载默认配置和用户覆盖配置，不保存共享对话上下文；知识文件限制在对应实例的数据目录内。API Key 优先读取模型对应的加密凭据，未设置时沿用环境变量；配置/请求校验错误及上游错误均返回错误码，不输出完整配置、消息内容或上游响应。多实例隔离是运行配置与上下文隔离；未来的多租户权限管理仍需单独实现。
 
 使用仓库内 Runtime 时，在本地 `.env` 设置 `AI_RUNTIME_BUILD=true`、固定版本的 `AI_SERVICE_IMAGE`（作为本地构建标签）和现有 `AI_ADMIN_IMAGE`。安装器会加载 `stacks/ai-service/compose.runtime.yaml`，构建 Runtime、拉取管理服务镜像，并将 `config/services/` 只读挂载。默认 `AI_RUNTIME_BUILD=false`，原有自定义镜像流程继续可用，AI Service 仍为可选模块。自定义外部镜像需要自行集成此 Runtime 才能处理多实例请求。
 

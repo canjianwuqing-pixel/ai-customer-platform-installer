@@ -12,7 +12,7 @@ import stat
 from .config import RuntimeFailure, _boolean, _load_yaml, _text, validate_services
 
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 MIGRATIONS = {
     1: (
         """CREATE TABLE management_records (
@@ -26,6 +26,22 @@ MIGRATIONS = {
     2: ("""CREATE TABLE runtime_profiles (
         kind TEXT NOT NULL, key TEXT NOT NULL, config TEXT NOT NULL,
         PRIMARY KEY (kind, key))""",),
+    3: (
+        """CREATE TABLE runtime_credentials (scope TEXT NOT NULL, key TEXT NOT NULL,
+            sealed BLOB NOT NULL, PRIMARY KEY(scope,key))""",
+        """CREATE TABLE chatwoot_bindings (service_id TEXT PRIMARY KEY, base_url TEXT NOT NULL,
+            account_id INTEGER NOT NULL, inbox_id INTEGER, bot_id INTEGER, enabled INTEGER NOT NULL DEFAULT 0,
+            last_error TEXT NOT NULL DEFAULT '', UNIQUE(base_url,account_id,inbox_id))""",
+        """CREATE TABLE chatwoot_conversations (service_id TEXT NOT NULL, conversation_id INTEGER NOT NULL,
+            paused INTEGER NOT NULL DEFAULT 0, resume_after INTEGER NOT NULL DEFAULT 0,
+            reason TEXT NOT NULL DEFAULT '', PRIMARY KEY(service_id,conversation_id))""",
+        """CREATE TABLE chatwoot_events (service_id TEXT NOT NULL, conversation_id INTEGER NOT NULL,
+            message_id INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'waiting', attempts INTEGER NOT NULL DEFAULT 0,
+            next_at REAL NOT NULL DEFAULT 0, lease_until REAL NOT NULL DEFAULT 0,
+            reply BLOB, error TEXT NOT NULL DEFAULT '', created_at REAL NOT NULL,
+            PRIMARY KEY(service_id,conversation_id,message_id))""",
+        "CREATE INDEX chatwoot_event_queue ON chatwoot_events(status,next_at)",
+    ),
 }
 DOMAIN_FIELDS = {"domain", "service_id", "enabled", "default_entry"}
 DNS_LABEL = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\Z")
@@ -255,10 +271,16 @@ class ManagementStore:
                             for path in root.rglob("*.yaml") if not path.name.endswith(".example.yaml"))
         return [{"id": key, **self.get_profile(kind, key)} for key in sorted(keys)]
 
-    def save_profile(self, kind, key, body, *, create=False):
+    def save_profile(self, kind, key, body, *, create=False, credential=None):
         from .profile_api import validate_profile
         record = validate_profile(self.resolver, kind, key, body)
         with self._connection(write=True) as connection:
+            if kind == "ai":
+                from .vault import CredentialVault
+                existing_key = CredentialVault(self.resolver).get("model", key, connection=connection)
+                protected = [value for value in (credential, existing_key, self.resolver.env.get(record["api_key_env"])) if value]
+                if any(value in key or any(value in str(field) for field in record.values()) for value in protected):
+                    raise RuntimeFailure("invalid_profile_configuration", 422)
             profiles = self._profiles(connection)
             path = self.resolver.config_dir / kind / (key + ".yaml")
             exists = (kind, key) in profiles or path.is_file() or (kind == "runtime" and key == "default")
@@ -278,6 +300,9 @@ class ManagementStore:
                     self._check_runtime(entry, profiles)
             connection.execute("INSERT INTO runtime_profiles VALUES (?, ?, ?) ON CONFLICT(kind,key) DO UPDATE SET config=excluded.config",
                                (kind, key, json.dumps(record, ensure_ascii=False)))
+            if credential is not None:
+                from .vault import CredentialVault
+                CredentialVault(self.resolver).put(connection, "model", key, credential)
         return {"id": key, **record}
 
     def _check_runtime(self, record, profiles):
@@ -308,6 +333,9 @@ class ManagementStore:
             if action != "create" and key not in collection:
                 raise RuntimeFailure("record_not_found", 404)
             if action == "delete":
+                if kind == "service" and connection.execute("PRAGMA user_version").fetchone()[0] >= 3:
+                    if connection.execute("SELECT 1 FROM chatwoot_bindings WHERE service_id=? AND bot_id IS NOT NULL", (key,)).fetchone():
+                        raise RuntimeFailure("service_has_chatwoot_binding", 409)
                 if kind == "service" and any(value["service_id"] == key for value in domains.values()):
                     raise RuntimeFailure("service_has_domain_bindings", 409)
                 del collection[key]

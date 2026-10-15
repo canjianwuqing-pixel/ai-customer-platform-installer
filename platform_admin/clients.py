@@ -3,6 +3,7 @@
 import httpx
 
 from .auth import AdminError
+from .forms import ERRORS
 
 
 SAFE_ERRORS = {"invalid_service_binding", "bound_service_is_disabled", "multiple_default_domains",
@@ -10,7 +11,7 @@ SAFE_ERRORS = {"invalid_service_binding", "bound_service_is_disabled", "multiple
     "record_not_found", "invalid_request", "invalid_profile_configuration", "invalid_runtime_configuration",
     "invalid_default_service", "default_service_must_remain_enabled", "maintenance_rejected",
     "unknown_service_id", "knowledge_not_configured", "unsafe_knowledge_path", "knowledge_too_large",
-    "invalid_knowledge_content", "knowledge_conflict", "knowledge_storage_unavailable"}
+    "invalid_knowledge_content", "knowledge_conflict", "knowledge_storage_unavailable"} | set(ERRORS)
 
 
 class InternalClient:

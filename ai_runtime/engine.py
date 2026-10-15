@@ -11,7 +11,7 @@ from .config import RuntimeConfig, RuntimeFailure, ServiceResolver
 logger = logging.getLogger("ai_runtime")
 
 
-def build_messages(config: RuntimeConfig, message: str) -> list[dict[str, str]]:
+def build_messages(config: RuntimeConfig, message: str, history=None) -> list[dict[str, str]]:
     messages = []
     instructions = [config.system_prompt, *config.reply_rules]
     if any(instructions):
@@ -22,6 +22,8 @@ def build_messages(config: RuntimeConfig, message: str) -> list[dict[str, str]]:
         if context:
             # Reference material has a separate user role; it is not system policy.
             messages.append({"role": "user", "content": f"<knowledge_context>\n{context}\n</knowledge_context>"})
+    if history:
+        messages.extend(history)
     messages.append({"role": "user", "content": message})
     return messages
 
@@ -57,10 +59,19 @@ class RuntimeEngine:
         self.resolver = resolver
         self.provider = provider or ChatProvider()
 
-    async def respond(self, message: str, service_id: str | None = None) -> dict[str, str]:
+    async def respond(self, message: str, service_id: str | None = None, *, history=None, redact_values=()) -> dict[str, str]:
         config = await run_in_threadpool(self.resolver.resolve, service_id)
         credential = self.resolver.credential(config)
-        messages = await run_in_threadpool(build_messages, config, message)
+        messages = await run_in_threadpool(build_messages, config, message, history)
+        from .config import RESERVED_CREDENTIALS
+        protected = [credential, *redact_values, *(value for key, value in self.resolver.env.items() if key in RESERVED_CREDENTIALS and value)]
+        for item in messages:
+            for secret in protected:
+                if secret:
+                    item["content"] = item["content"].replace(secret, "[已隐藏凭据]")
         reply = await self.provider.reply(config, credential, messages)
+        for secret in protected:
+            if secret:
+                reply = reply.replace(secret, "[已隐藏凭据]")
         logger.info("AI reply completed service_id=%s", config.service_id)
         return {"service_id": config.service_id, "reply": reply}
