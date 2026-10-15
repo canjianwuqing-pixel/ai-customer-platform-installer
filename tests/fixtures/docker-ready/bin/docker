@@ -71,6 +71,25 @@ case "${1:-}" in
     esac
     ;;
   run)
+    # Optional real volume transport for persistence fixtures. Only this exact,
+    # resolved disposable directory can be archived/restored; never a host path
+    # supplied by the production command being simulated.
+    if [[ -n "${DOCKER_FIXTURE_AI_DATA_DIR:-}" &&
+          ( "$*" == *'--volumes-from fixture-container-ai-service:ro '* ||
+            "$*" == *'--volumes-from fixture-container-ai-service '* ) ]]; then
+      fixture_volume="$(cd -- "${DOCKER_FIXTURE_AI_DATA_DIR}" && pwd -P)"
+      fixture_owner="$(cd -- "${ADMIN_INSTALLER_FIXTURE_ROOT:?}" && pwd -P)"
+      [[ "${fixture_volume}" == "${fixture_owner}/runtime-data" ]] || exit 1
+      case "${fixture_owner}" in */runtime/tests/admin-installer.*) ;; *) exit 1 ;; esac
+      if [[ "$*" == *' -czf - .'* ]]; then tar -C "${fixture_volume}" -czf - .
+      elif [[ "$*" == *' -cf - .'* ]]; then tar -C "${fixture_volume}" -cf - .
+      else
+        find "${fixture_volume}" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
+        if [[ "${!#}" == true ]]; then tar -C "${fixture_volume}" -xzf -
+        else tar -C "${fixture_volume}" -xf -; fi
+      fi
+      exit 0
+    fi
     if [[ "$*" == *" -czf - ."* ]]; then
       tar -czf - --files-from /dev/null
     elif [[ "$*" == *" -cf - ."* ]]; then

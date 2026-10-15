@@ -12,5 +12,7 @@
 !platform_admin/requirements.txt
 !platform_admin/templates/
 !platform_admin/templates/*.html
+!platform_admin/static/
+!platform_admin/static/*.js
 !stacks/admin/
 !stacks/admin/Dockerfile

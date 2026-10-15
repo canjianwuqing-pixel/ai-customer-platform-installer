@@ -17,11 +17,8 @@ def build_messages(config: RuntimeConfig, message: str) -> list[dict[str, str]]:
     if any(instructions):
         messages.append({"role": "system", "content": "\n".join(text for text in instructions if text)})
     if config.knowledge_source is not None:
-        try:
-            with config.knowledge_source.open(encoding="utf-8") as stream:
-                context = stream.read(config.knowledge_max_characters)
-        except (OSError, UnicodeError):
-            raise RuntimeFailure("knowledge_source_unavailable") from None
+        from .knowledge import read_runtime_knowledge
+        context = read_runtime_knowledge(config)
         if context:
             # Reference material has a separate user role; it is not system policy.
             messages.append({"role": "user", "content": f"<knowledge_context>\n{context}\n</knowledge_context>"})

@@ -10,7 +10,7 @@ from urllib.parse import parse_qs, urlsplit
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, FileResponse
 import httpx
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
@@ -78,7 +78,8 @@ def create_app(env=None, management=None, maintenance=None):
                 if not isinstance(result, dict):
                     raise ValueError
                 return result
-            fields = parse_qs(data.decode(), keep_blank_values=True, max_num_fields=max_fields, strict_parsing=True)
+            fields = parse_qs(data.decode(), keep_blank_values=True, max_num_fields=max_fields,
+                              strict_parsing=True, errors="strict")
             if any(len(values) != 1 for values in fields.values()):
                 raise ValueError
             return {key: values[0] for key, values in fields.items()}
@@ -118,6 +119,8 @@ def create_app(env=None, management=None, maintenance=None):
         # Keep the origin for our forms, but send no Referer across origins.
         response.headers.update({"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff",
             "Referrer-Policy": "same-origin", "Content-Security-Policy": "default-src 'none'; style-src 'self' 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'"})
+        if request.url.path in {"/admin/manage/knowledge", "/admin/knowledge"}:
+            response.headers["Content-Security-Policy"] += "; script-src 'self'"
         return response
 
     @app.exception_handler(AdminError)
@@ -233,6 +236,58 @@ def create_app(env=None, management=None, maintenance=None):
             raise AdminError("unsafe_upstream_response", 502) from None
         return result
 
+    async def knowledge_call(service_id, method="GET", data=None):
+        if not re.fullmatch(r"[a-z][a-z0-9_-]{0,63}", service_id):
+            raise AdminError("invalid_identifier", 422)
+        if data is not None:
+            ensure_public(data)
+        result = await management.call(method, "/management/services/" + service_id + "/knowledge", data)
+        ensure_public(result)
+        return result
+
+    @app.get("/admin/static/knowledge.js")
+    def knowledge_script(request: Request):
+        session(request)
+        return FileResponse(Path(__file__).parent / "static" / "knowledge.js", media_type="text/javascript")
+
+    async def knowledge_page(csrf, selected="", *, draft=None, error="", saved=False, status=200):
+        services = await public_call("services", "GET")
+        document = None
+        if selected and draft is None:
+            try:
+                document = await knowledge_call(selected)
+            except AdminError as exc:
+                error, status = forms.error_message(exc.code), exc.status
+        elif draft is not None:
+            document = draft
+        response = page("knowledge.html", csrf, kind="knowledge",
+                        records=await public_call("knowledge", "GET"), services=services,
+                        selected=selected, document=document, error=error, saved=saved, dirty=draft is not None)
+        response.status_code = status
+        return response
+
+    @app.post("/admin/knowledge")
+    async def save_knowledge(request: Request):
+        _, csrf = session(request)
+        _, data = await mutation(request, max_fields=6, max_bytes=10_000_000)
+        ensure_public(data)
+        if (set(data) != {"service_id", "content", "revision", "action"}
+                or not all(isinstance(value, str) for value in data.values())
+                or data["action"] not in {"save", "clear"}):
+            raise AdminError("invalid_request", 422)
+        selected = data["service_id"]
+        try:
+            payload = {"revision": data["revision"]}
+            if data["action"] == "save":
+                payload["content"] = data["content"]
+            await knowledge_call(selected, "PUT" if data["action"] == "save" else "DELETE", payload)
+        except AdminError as exc:
+            if exc.code in {"sensitive_input_rejected", "unsafe_upstream_response", "invalid_identifier"}:
+                raise
+            return await knowledge_page(csrf, selected, draft={"content": data["content"], "revision": data["revision"]},
+                                        error=forms.error_message(exc.code), status=exc.status)
+        return RedirectResponse("/admin/manage/knowledge?service_id=" + selected + "&saved=1", status_code=303)
+
     @app.get("/admin/api/{kind}")
     async def api_list(kind: str, request: Request):
         session(request)
@@ -256,6 +311,9 @@ def create_app(env=None, management=None, maintenance=None):
     @app.get("/admin/manage/{kind}")
     async def list_page(kind: str, request: Request):
         _, csrf = session(request)
+        if kind == "knowledge":
+            return await knowledge_page(csrf, request.query_params.get("service_id", ""),
+                                        saved=request.query_params.get("saved") == "1")
         records = await public_call(kind, "GET")
         return page("records.html", csrf, kind=kind, records=records, saved=request.query_params.get("saved") == "1")
 
@@ -291,7 +349,7 @@ def create_app(env=None, management=None, maintenance=None):
         resource_path(kind, key if key != "_new" else "")
         if kind == "runtime" and key == "_new":
             return RedirectResponse("/admin/edit/runtime/default", status_code=303)
-        record = {} if key == "_new" else await public_call(kind, "GET", key)
+        record = ({"source": "knowledge.txt"} if kind == "knowledge" else {}) if key == "_new" else await public_call(kind, "GET", key)
         return await render_editor(kind, key, csrf, record)
 
     @app.post("/admin/edit/{kind}/{key:path}")

@@ -57,7 +57,7 @@ FIELDS = {
         Field("reply_rules", "回复规则", "rules", (), maximum=4000, hint="每条规则可包含多行；最多 64 条。留空的规则不会保存。"),
     ),
     "knowledge": (
-        Field("source", "知识库文件来源", maximum=1024, hint="填写各实例数据目录内的相对文件路径；留空表示不使用文件。现有 API 不支持在此编辑文件内容或上传文件。"),
+        Field("source", "知识库文件来源", maximum=1024, hint="各实例独立数据目录内的相对文本文件路径。新配置默认使用 knowledge.txt，无需了解服务器目录；原有路径保持不变，留空表示不使用文件。正文在知识库页面按实例编辑。"),
         Field("max_characters", "最多读取字符数", "number", 12000, True, maximum=100000, minimum=1),
     ),
     "channels": (
@@ -73,6 +73,13 @@ FIELDS = {
 }
 
 ERRORS = {
+    "unknown_service_id": "客服实例不存在，请重新选择。",
+    "knowledge_not_configured": "该实例尚未关联知识库，或配置的文件来源为空。请先编辑知识库配置并为实例设置关联；新配置可直接使用默认文件名。",
+    "unsafe_knowledge_path": "知识文件路径不安全，不能使用链接、系统配置或凭据文件，请检查知识库配置。",
+    "knowledge_too_large": "知识正文最多为 1 MiB UTF-8 文本，超出时不会截断或覆盖原文件。",
+    "invalid_knowledge_content": "正文必须为有效的 UTF-8 纯文本，不能包含空字符。原文件未修改。",
+    "knowledge_conflict": "正文或知识库关联已被修改，本次未覆盖。请先保留下方草稿，再重新加载最新正文。",
+    "knowledge_storage_unavailable": "无法安全读写知识文件，请检查数据卷权限或文件链接；未确认保存成功。",
     "invalid_request": "请求字段或数据格式不正确，请检查后重试。",
     "invalid_identifier": "配置标识不符合现有规则。",
     "record_already_exists": "该标识已存在，请使用其他标识。",

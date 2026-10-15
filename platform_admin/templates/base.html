@@ -6,4 +6,4 @@
 </style></head>
 <body><main><h1>统一管理后台</h1>{% if csrf and not login %}<nav aria-label="管理导航"><a href="/admin">总览</a><a href="/admin/manage/services">客服实例</a><a href="/admin/manage/domains">域名管理</a><a href="/admin/manage/ai">AI 模型</a><a href="/admin/manage/prompts">提示词</a><a href="/admin/manage/runtime">运行配置</a><a href="/admin/manage/knowledge">知识库配置</a><a href="/admin/manage/channels">渠道配置</a><a href="/admin/maintenance">系统维护</a><a href="/admin/password">修改密码</a></nav>{% endif %}
 {% block content %}{% endblock %}
-{% if csrf and not login %}<form class="logout" method="post" action="/admin/logout"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="secondary">退出登录</button></form>{% endif %}</main></body></html>
+{% if csrf and not login %}<form class="logout" method="post" action="/admin/logout"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="secondary">退出登录</button></form>{% endif %}</main>{% block scripts %}{% endblock %}</body></html>

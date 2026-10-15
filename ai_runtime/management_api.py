@@ -1,11 +1,13 @@
 """Authenticated service/domain administration, with no credential fields."""
 
 import hmac
+import json
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Path, Response
+from fastapi import APIRouter, Depends, Path, Request, Response
+from starlette.concurrency import run_in_threadpool
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from .config import REFERENCE, RuntimeFailure
 from .management_store import ManagementStore, valid_domain
@@ -38,6 +40,15 @@ class ServiceFields(InputModel):
     prompt_config: str = ""
     knowledge_config: str = ""
     channel_config: str = ""
+
+
+class KnowledgeWrite(InputModel):
+    content: str = Field(max_length=1_048_576)
+    revision: str = Field(pattern=r"^[a-f0-9]{64}$")
+
+
+class KnowledgeClear(InputModel):
+    revision: str = Field(pattern=r"^[a-f0-9]{64}$")
 
 
 class ServiceCreate(ServiceFields):
@@ -107,6 +118,32 @@ def management_router(resolver) -> APIRouter:
     router = APIRouter(prefix="/management", dependencies=[Depends(authenticate)])
     from .profile_api import profile_router
     router.include_router(profile_router(resolver))
+    from .knowledge import KnowledgeStore, MAX_CONTENT_BYTES
+    knowledge = KnowledgeStore(resolver)
+
+    @router.get("/services/{service_id}/knowledge")
+    def read_knowledge(service_id: ServicePath, response: Response):
+        response.headers["Cache-Control"] = "no-store"
+        return knowledge.content(service_id)
+
+    @router.api_route("/services/{service_id}/knowledge", methods=["PUT", "DELETE"])
+    async def write_knowledge(service_id: ServicePath, request: Request, response: Response):
+        # Bound raw JSON as well as decoded UTF-8. Authentication has already
+        # run; error responses never echo validation input or document text.
+        raw = bytearray()
+        async for chunk in request.stream():
+            raw.extend(chunk)
+            if len(raw) > MAX_CONTENT_BYTES * 6 + 1024:
+                raise RuntimeFailure("knowledge_too_large", 413)
+        try:
+            model = KnowledgeClear if request.method == "DELETE" else KnowledgeWrite
+            body = model.model_validate(json.loads(raw))
+        except (ValueError, UnicodeError, ValidationError, RecursionError):
+            raise RuntimeFailure("invalid_request", 422) from None
+        response.headers["Cache-Control"] = "no-store"
+        return await run_in_threadpool(knowledge.content, service_id,
+                                      content="" if request.method == "DELETE" else body.content,
+                                      revision=body.revision)
 
     def domain_key(domain):
         domain = domain.lower()

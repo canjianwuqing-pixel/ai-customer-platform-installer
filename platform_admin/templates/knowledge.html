@@ -1,0 +1,33 @@
+{% extends "base.html" %}{% block content %}
+<h2>知识库正文</h2>
+<p class="hint">选择客服实例后自动加载其独立正文，也可点击“加载正文”重新读取。共享知识库配置只共享文件名及读取上限，不共享正文。保存后下次 AI 请求立即生效，无需重启。</p>
+<form method="get" action="/admin/manage/knowledge">
+  <label for="service-picker">客服实例 <span class="required">（必选）</span></label>
+  <select id="service-picker" name="service_id" required><option value="">请选择客服实例</option>
+  {% for service in services %}<option value="{{ service.id }}" {% if selected == service.id %}selected{% endif %}>{{ service.name }}（{{ service.id }} · {{ '已启用' if service.enabled else '已停用' }}）</option>{% endfor %}</select>
+  <div class="form-actions"><button>加载正文</button><a class="button secondary" href="/admin/manage/services">设置实例关联</a></div>
+</form>
+{% if error %}<p class="notice error" role="alert">{{ error }}</p>{% endif %}
+{% if saved and not error %}<p class="notice success" role="status">{{ '正文已保存。重新打开仍可读取，其他实例不受影响。' if selected else '配置已保存。可点击“编辑”重新查看当前配置。' }}</p>{% endif %}
+{% if document %}
+{% if document.knowledge_config is defined %}<p class="hint">知识库配置：{{ document.knowledge_config }} · 文件：{{ document.source }} · Runtime 最多读取 {{ document.max_characters }} 字符（正文上限 1 MiB UTF-8）。</p>
+{% if not document.exists %}<p class="hint">尚无正文文件，点击保存将首次创建。可先为停用的实例准备正文，再启用实例。</p>{% endif %}{% endif %}
+<form id="knowledge-form" method="post" action="/admin/knowledge" data-dirty="{{ 'true' if dirty else 'false' }}">
+  <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="service_id" value="{{ selected }}"><input type="hidden" name="revision" value="{{ document.revision }}">
+  <label for="knowledge-content">知识正文</label>
+  <textarea id="knowledge-content" name="content" rows="16" maxlength="1048576" spellcheck="false">
+{{ document.content }}</textarea>
+  <p class="hint">支持多行纯文本，允许保存空正文。清空只清空该实例的文件内容，保留关联和原路径。</p>
+  <div class="form-actions"><button name="action" value="save">保存正文</button><a class="button secondary" href="/admin/manage/knowledge?service_id={{ selected }}">重新加载</a></div>
+  <label class="switch-label"><input type="checkbox" id="confirm-clear">确认清空当前实例正文</label>
+  <button class="secondary" name="action" value="clear" id="clear-knowledge" disabled>清空正文</button>
+</form>
+{% endif %}
+<section aria-label="知识库配置档"><h2>知识库配置档</h2>
+<p class="hint">配置档可以被多个实例引用。修改文件来源会切换各实例读取的文件，不会移动或覆盖旧正文。普通新配置可直接使用默认文件名。</p>
+<a class="button" href="/admin/edit/knowledge/_new">创建知识库配置</a>
+<div class="table-wrap"><table><thead><tr><th>配置标识</th><th>文件来源</th><th>操作</th></tr></thead><tbody>
+{% for record in records %}<tr><td>{{ record.id }}</td><td>{{ record.source or '未设置文件来源' }}</td><td><a href="/admin/edit/knowledge/{{ record.id }}">编辑配置</a></td></tr>
+{% else %}<tr><td colspan="3">暂无知识库配置，请先创建，再为客服实例设置关联。</td></tr>{% endfor %}</tbody></table></div></section>
+{% endblock %}
+{% block scripts %}<script src="/admin/static/knowledge.js" defer></script>{% endblock %}

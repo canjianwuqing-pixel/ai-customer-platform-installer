@@ -11,9 +11,10 @@ from platform_admin import forms
 
 class Editor(HTMLParser):
     """Collect successful controls from the editor, never the logout form."""
-    def __init__(self, text):
+    def __init__(self, text, form_id="config-form"):
         super().__init__(convert_charrefs=True)
         self.active = False
+        self.form_id = form_id
         self.data, self.controls, self.options = {}, {}, {}
         self.current, self.option = None, None
         self.text = ""
@@ -22,7 +23,7 @@ class Editor(HTMLParser):
     def handle_starttag(self, tag, attrs):
         attrs = dict(attrs)
         if tag == "form":
-            self.active = attrs.get("id") == "config-form"
+            self.active = attrs.get("id") == self.form_id
         if not self.active:
             return
         name = attrs.get("name")

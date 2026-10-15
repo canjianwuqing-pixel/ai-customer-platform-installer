@@ -132,7 +132,7 @@ class ServiceResolver:
 
     def __init__(self, config_dir: Path, data_dir: Path, env: Mapping[str, str]):
         self.config_dir = config_dir.resolve()
-        self.data_dir = data_dir.resolve()
+        self.data_dir = data_dir.absolute()
         self.env = dict(env)
 
     @classmethod
@@ -250,13 +250,14 @@ class ServiceResolver:
         service_root = self.data_dir / "services" / service_id
         if source and (service_root.is_symlink() or service_root.parent.is_symlink()):
             raise RuntimeFailure("invalid_configuration_reference")
-        knowledge_path = _inside(service_root, source) if source else None
+        from .knowledge import knowledge_path
+        knowledge_file = knowledge_path(self.data_dir, service_id, source) if source else None
         limit = knowledge.get("max_characters", 12000)
         if type(limit) is not int or not 1 <= limit <= 100000:
             raise RuntimeFailure("invalid_configuration")
         return RuntimeConfig(
             service_id, model, base_url, api_key_env, system_prompt,
-            reply_rules, knowledge_path, limit,
+            reply_rules, knowledge_file, limit,
         )
 
     def credential(self, config: RuntimeConfig) -> str:

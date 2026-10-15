@@ -284,8 +284,8 @@ class ManagementStore:
         try:
             config = self.resolver.runtime_for_instance(record, profiles=profiles)
             if config.knowledge_source is not None:
-                with config.knowledge_source.open(encoding="utf-8") as stream:
-                    stream.read(config.knowledge_max_characters)
+                from .knowledge import read_runtime_knowledge
+                read_runtime_knowledge(config)
         except (RuntimeFailure, OSError, UnicodeError):
             raise RuntimeFailure("invalid_runtime_configuration", 422) from None
 

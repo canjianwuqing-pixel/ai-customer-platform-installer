@@ -23,7 +23,7 @@ trap cleanup EXIT
 trap 'printf "Admin installer fixture failed at line %s.\n" "${LINENO}" >&2' ERR
 
 mkdir -p -- "${TEST_PROJECT}/config/services" "${TEST_PROJECT}/config/domains"
-cp -- "${TEST_ROOT}/install.sh" "${TEST_ROOT}/.env.example" "${TEST_PROJECT}/"
+cp -- "${TEST_ROOT}"/{install,manage,backup,restore,upgrade,rollback}.sh "${TEST_ROOT}/.env.example" "${TEST_PROJECT}/"
 cp -R -- "${TEST_ROOT}/lib" "${TEST_ROOT}/modules" "${TEST_ROOT}/stacks" "${TEST_ROOT}/templates" "${TEST_PROJECT}/"
 cp -- "${TEST_ROOT}/config/default.env" "${TEST_ROOT}/config/images.env" "${TEST_PROJECT}/config/"
 cp -- "${TEST_ROOT}/config/services/services.yaml" "${TEST_PROJECT}/config/services/"
@@ -56,7 +56,9 @@ AI_SERVICE_COMPOSE_PROJECT=ai-customer-platform-ai-test
 ADMIN_MAINTENANCE_UNIT=ai-customer-platform-maintenance-fixture.service
 ADMIN_MAINTENANCE_STATE_DIR="${TEST_TEMP}/maintenance-state"
 ADMIN_MAINTENANCE_SOCKET_DIR="${TEST_TEMP}/maintenance-socket"
-config_save_keys "${INSTALLER_ENV_TEMPLATE}" ADMIN_ENABLED AI_SERVICE_COMPOSE_PROJECT ADMIN_MAINTENANCE_UNIT ADMIN_MAINTENANCE_STATE_DIR ADMIN_MAINTENANCE_SOCKET_DIR
+BACKUP_DIR="${TEST_TEMP}/backups" UPGRADE_RECORD_DIR="${TEST_TEMP}/upgrades"
+UPGRADE_CHATWOOT_VERSION=v4.19.0
+config_save_keys "${INSTALLER_ENV_TEMPLATE}" ADMIN_ENABLED AI_SERVICE_COMPOSE_PROJECT ADMIN_MAINTENANCE_UNIT ADMIN_MAINTENANCE_STATE_DIR ADMIN_MAINTENANCE_SOCKET_DIR BACKUP_DIR UPGRADE_RECORD_DIR UPGRADE_CHATWOOT_VERSION
 # Loading the template above sets CONFIG_FILE, restore the actual target.
 export CONFIG_FILE="${TEST_PROJECT}/.env"
 [[ ! -e "${CONFIG_FILE}" ]]
@@ -75,6 +77,9 @@ for key in ADMIN_SESSION_SECRET ADMIN_MAINTENANCE_TOKEN SERVICE_MANAGEMENT_TOKEN
 done
 
 readonly CHECKSUM="$(sha256sum "${CONFIG_FILE}" | awk '{print $1}')"
+export DOCKER_FIXTURE_AI_DATA_DIR="${TEST_TEMP}/runtime-data"
+export PYTHONPATH="${TEST_ROOT}${PYTHONPATH:+:${PYTHONPATH}}"
+"${ADMIN_TEST_PYTHON:-python3}" "${TEST_ROOT}/tests/knowledge_persistence_check.py" prepare "${TEST_PROJECT}" "${DOCKER_FIXTURE_AI_DATA_DIR}"
 "${ADMIN_TEST_PYTHON:-python3}" "${TEST_ROOT}/tests/recovery_persistence_check.py" prepare "${TEST_TEMP}/admin-data"
 SYSTEM_OS_RELEASE_FILE="${TEST_ROOT}/tests/fixtures/os-release.ubuntu-22.04" \
   bash "${TEST_PROJECT}/install.sh" </dev/null >"${TEST_TEMP}/repeat-output.log" 2>&1
@@ -83,6 +88,19 @@ config_load_installer_configuration "${CONFIG_FILE}" >/dev/null
 [[ "$(sha256sum "${CONFIG_FILE}" | awk '{print $1}')" == "${CHECKSUM}" ]]
 [[ -z "$(find "${TEST_PROJECT}" -name '.installer-admin-password-*' -print -quit)" ]]
 "${ADMIN_TEST_PYTHON:-python3}" "${TEST_ROOT}/tests/recovery_persistence_check.py" verify "${TEST_TEMP}/admin-data"
+"${ADMIN_TEST_PYTHON:-python3}" "${TEST_ROOT}/tests/knowledge_persistence_check.py" verify "${TEST_PROJECT}" "${DOCKER_FIXTURE_AI_DATA_DIR}"
+
+# Real entry points and real tar bytes: the only stub is Docker's volume
+# transport. Both the management SQLite records and instance files must return.
+bash "${TEST_PROJECT}/backup.sh" >"${TEST_TEMP}/knowledge-backup.log" 2>&1
+backup_id="$(find "${BACKUP_DIR}" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort | tail -1)"
+tar -tzf "${BACKUP_DIR}/${backup_id}/data/ai-service-data.tar.gz" | grep -Fq './services/service_a/legacy/manual.txt'
+"${ADMIN_TEST_PYTHON:-python3}" "${TEST_ROOT}/tests/knowledge_persistence_check.py" mutate "${TEST_PROJECT}" "${DOCKER_FIXTURE_AI_DATA_DIR}"
+bash "${TEST_PROJECT}/restore.sh" --yes "${backup_id}" >"${TEST_TEMP}/knowledge-restore.log" 2>&1
+"${ADMIN_TEST_PYTHON:-python3}" "${TEST_ROOT}/tests/knowledge_persistence_check.py" verify "${TEST_PROJECT}" "${DOCKER_FIXTURE_AI_DATA_DIR}"
+bash "${TEST_PROJECT}/upgrade.sh" --yes >"${TEST_TEMP}/knowledge-upgrade.log" 2>&1
+"${ADMIN_TEST_PYTHON:-python3}" "${TEST_ROOT}/tests/knowledge_persistence_check.py" verify "${TEST_PROJECT}" "${DOCKER_FIXTURE_AI_DATA_DIR}"
+unset DOCKER_FIXTURE_AI_DATA_DIR
 
 # A failed fresh installation retains configured credentials on resume.
 readonly RETRY_PROJECT="${TEST_TEMP}/retry-project"
@@ -105,3 +123,4 @@ config_load_installer_configuration "${CONFIG_FILE}" >/dev/null
 [[ "$(awk '/^初始密码：$/ {getline; print; exit}' "${TEST_TEMP}/resumed-output.log")" == admin ]]
 [[ -z "$(find "${RETRY_PROJECT}" -name '.installer-admin-password-*' -print -quit)" ]]
 printf '%s\n' 'Real installer flow fixtures passed: admin/admin defaults, stable configuration, no extra credential files and failure resume.'
+printf '%s\n' 'Knowledge bytes and associations survived restart, repeated install, real archive restore and upgrade entry points.'

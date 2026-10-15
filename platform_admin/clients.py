@@ -8,7 +8,9 @@ from .auth import AdminError
 SAFE_ERRORS = {"invalid_service_binding", "bound_service_is_disabled", "multiple_default_domains",
     "default_domain_must_be_enabled", "service_has_domain_bindings", "record_already_exists",
     "record_not_found", "invalid_request", "invalid_profile_configuration", "invalid_runtime_configuration",
-    "invalid_default_service", "default_service_must_remain_enabled", "maintenance_rejected"}
+    "invalid_default_service", "default_service_must_remain_enabled", "maintenance_rejected",
+    "unknown_service_id", "knowledge_not_configured", "unsafe_knowledge_path", "knowledge_too_large",
+    "invalid_knowledge_content", "knowledge_conflict", "knowledge_storage_unavailable"}
 
 
 class InternalClient:

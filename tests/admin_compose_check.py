@@ -27,6 +27,10 @@ assert admin["read_only"] and admin["healthcheck"]
 assert len(admin["ports"]) == 1 and admin["ports"][0]["host_ip"] == "127.0.0.1"
 assert all("docker.sock" not in volume.get("source", "") and volume.get("target") != "/app/.env" for volume in admin["volumes"])
 assert any(volume.get("source") == "ai_admin_data" for volume in admin["volumes"])
+runtime = config["services"]["ai-service"]
+assert any(volume.get("source") == "ai_service_data" and volume.get("target") == runtime["environment"]["AI_SERVICE_DATA_PATH"]
+           and not volume.get("read_only", False) for volume in runtime["volumes"])
+assert any(volume.get("target") == "/app/config/services" and volume.get("read_only") for volume in runtime["volumes"])
 assert any(volume.get("target") == "/run/platform-health/readiness.py" and volume.get("read_only")
            and Path(volume["source"]) == root / "modules/admin/readiness.py" for volume in admin["volumes"])
 print("Real Compose validation passed: one Admin, direct password configuration, restricted mounts and health check.")

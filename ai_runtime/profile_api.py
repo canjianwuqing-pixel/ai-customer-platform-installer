@@ -57,8 +57,9 @@ def validate_profile(resolver, kind, key, body):
             if any(not rule.strip() or len(rule) > 4000 for rule in record["reply_rules"]):
                 raise ValueError
         elif kind == "knowledge":
-            from .config import _inside
-            _inside(resolver.data_dir / "services" / "validation", record["source"])
+            from .knowledge import knowledge_path
+            if record["source"]:
+                knowledge_path(resolver.data_dir, "validation", record["source"])
         elif kind == "channels":
             if record["config_ref"] and (not REFERENCE.fullmatch(record["config_ref"])
                     or any(part in {".", ".."} for part in record["config_ref"].split("/"))):
