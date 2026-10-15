@@ -1,1 +1,57 @@
-{% extends "base.html" %}{% block content %}<h2>{{ kind }} / {{ key }}</h2><p class="hint">基础版使用 JSON 表单。服务启用状态通过 enabled 修改。只填写配置，不要填写 API Key、Token 或密码；凭据仅使用环境变量引用。</p><details><summary>字段示例（通用占位值）</summary><pre>{% if kind == 'services' %}{"id":"service_a","name":"客服实例","enabled":false,"ai_config":"model_a","prompt_config":"prompt_a","knowledge_config":"","channel_config":""}{% elif kind == 'domains' %}{"domain":"entry.example.test","service_id":"service_a","enabled":false,"default_entry":false}{% elif kind == 'ai' %}{"id":"model_a","model":"provider-model-id","api_base_url":"https://provider.example.test/v1","api_key_env":"OPENAI_API_KEY"}{% elif kind == 'prompts' %}{"id":"prompt_a","system_prompt":"","reply_rules":[]}{% elif kind == 'runtime' %}{"id":"default","default_service_id":"service_a"}{% elif kind == 'knowledge' %}{"id":"knowledge_a","source":"knowledge.txt","max_characters":12000}{% else %}{"id":"channel_a","enabled":false,"provider":"","config_ref":""}{% endif %}</pre></details><form method="post"><input type="hidden" name="csrf" value="{{ csrf }}"><label>配置 JSON <textarea name="record" required maxlength="60000">{{ record }}</textarea></label><button>校验并保存</button></form>{% endblock %}
+{% extends "base.html" %}
+{% block content %}
+<div class="page-heading"><div><h2>{{ '创建' if key == '_new' else '编辑' }}{{ titles[kind] }}</h2><p class="hint">带 <span class="required">*</span> 的字段为必填项。只填写配置，不填写 API Key、Token 或密码。</p></div><a href="/admin/manage/{{ kind }}">返回列表</a></div>
+{% if error %}<div class="notice error" role="alert"><strong>保存未完成</strong><p>{{ error }}</p><p class="hint">请检查后重试；未显示保存成功前，不代表配置已更新。</p></div>{% endif %}
+<form id="config-form" method="post">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <div class="form-grid">
+    <div class="field">
+      <label for="identity">{{ identity.label }}{% if key == '_new' %} <span class="required" aria-label="必填">*</span>{% else %} <span class="hint">（只读）</span>{% endif %}</label>
+      {% if key == '_new' %}
+      <input id="identity" name="{{ identity.name }}" value="{{ record.get(identity.name, '') }}" required maxlength="{{ identity.maximum }}" {% if identity.pattern %}pattern="{{ identity.pattern }}"{% endif %} autocomplete="off" spellcheck="false" aria-describedby="identity-hint" {% if invalid == identity.name %}aria-invalid="true"{% endif %}>
+      {% else %}
+      <input id="identity" value="{{ key }}" readonly aria-readonly="true" aria-describedby="identity-hint">
+      {% endif %}
+      <p id="identity-hint" class="hint">{% if kind == 'runtime' %}运行配置仅有一条默认记录，不创建新的配置或修改标识。{% elif key == '_new' %}{{ identity.hint }}{% else %}标识创建后不可修改；需要其他标识时，请新建配置。{% endif %}</p>
+    </div>
+    {% for field in fields %}
+    {% if field.control == 'rules' %}
+    <fieldset class="field wide rules" id="field-reply_rules" {% if invalid == field.name %}aria-invalid="true"{% endif %}>
+      <legend>{{ field.label }}</legend><p class="hint">{{ field.hint }} 添加和删除只调整当前表单，点击“保存配置”后才生效。</p>
+      <input type="hidden" name="_rules_present" value="1">
+      {% for rule in rows %}
+      <div class="rule-row"><label for="rule-{{ loop.index0 }}">规则 {{ loop.index }}</label>
+        <textarea id="rule-{{ loop.index0 }}" name="reply_rule_{{ loop.index0 }}" rows="3" maxlength="4000">
+{{ rule }}</textarea>
+        <button class="secondary small" type="submit" name="_action" value="remove_rule_{{ loop.index0 }}" formnovalidate>删除此条</button>
+      </div>
+      {% endfor %}
+      {% if rows | length < 64 %}<button class="secondary" type="submit" name="_action" value="add_rule" formnovalidate>添加一条规则</button>{% endif %}
+    </fieldset>
+    {% else %}
+    <div class="field{% if field.control in ['textarea', 'checkbox'] %} wide{% endif %}">
+      {% if field.control == 'checkbox' %}
+      <input type="hidden" name="_present_{{ field.name }}" value="1">
+      <label class="switch-label" for="field-{{ field.name }}"><input id="field-{{ field.name }}" name="{{ field.name }}" type="checkbox" role="switch" value="true" {% if record.get(field.name) %}checked{% endif %} aria-describedby="hint-{{ field.name }}">{{ field.label }}</label>
+      {% else %}
+      <label for="field-{{ field.name }}">{{ field.label }}{% if field.required %} <span class="required" aria-label="必填">*</span>{% endif %}</label>
+      {% if field.control == 'select' %}
+      <select id="field-{{ field.name }}" name="{{ field.name }}" {% if field.required %}required{% endif %} aria-describedby="hint-{{ field.name }}" {% if invalid == field.name %}aria-invalid="true"{% endif %}>
+        {% if field.required %}<option value="" disabled {% if not record.get(field.name) %}selected{% endif %}>请选择</option>{% endif %}
+        {% for option in options[field.name] %}<option value="{{ option.value }}" {% if option.value == record.get(field.name, '') %}selected{% endif %}>{{ option.label }}</option>{% endfor %}
+      </select>
+      {% elif field.control == 'textarea' %}
+      <textarea id="field-{{ field.name }}" name="{{ field.name }}" rows="9" {% if field.maximum %}maxlength="{{ field.maximum }}"{% endif %} aria-describedby="hint-{{ field.name }}" {% if invalid == field.name %}aria-invalid="true"{% endif %}>
+{{ record.get(field.name, '') }}</textarea>
+      {% else %}
+      <input id="field-{{ field.name }}" name="{{ field.name }}" type="{{ field.control }}" value="{{ record.get(field.name, '') }}" {% if field.required %}required{% endif %} {% if field.maximum is not none %}{{ 'max' if field.control == 'number' else 'maxlength' }}="{{ field.maximum }}"{% endif %} {% if field.minimum is not none %}min="{{ field.minimum }}" step="1"{% endif %} {% if field.pattern %}pattern="{{ field.pattern }}"{% endif %} autocomplete="off" aria-describedby="hint-{{ field.name }}" {% if invalid == field.name %}aria-invalid="true"{% endif %}>
+      {% endif %}
+      {% endif %}
+      <p id="hint-{{ field.name }}" class="hint">{{ field.hint }}</p>
+    </div>
+    {% endif %}
+    {% endfor %}
+  </div>
+  <div class="form-actions"><button type="submit">保存配置</button><a class="button secondary" href="/admin/manage/{{ kind }}">返回列表</a></div>
+</form>
+{% endblock %}

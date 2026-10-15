@@ -1,1 +1,1 @@
-{% extends "base.html" %}{% block content %}<h2>操作未完成</h2><p>{{ code }}</p><p><a href="/admin">返回后台</a> · <a href="/admin/login">重新登录</a></p>{% endblock %}
+{% extends "base.html" %}{% block content %}<h2>操作未完成</h2><div class="notice error" role="alert">{{ error_message(code) }}</div><p class="hint">诊断代码：<code>{{ code }}</code></p><p><a href="/admin">返回后台</a> · <a href="/admin/login">重新登录</a></p>{% endblock %}

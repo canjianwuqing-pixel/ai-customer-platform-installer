@@ -16,6 +16,7 @@ from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from .auth import AdminError, AuthStore
 from .clients import InternalClient
+from . import forms
 
 
 def origin_tuple(value):
@@ -48,6 +49,7 @@ def create_app(env=None, management=None, maintenance=None):
         httpx.AsyncHTTPTransport(uds=env.get("ADMIN_MAINTENANCE_SOCKET", "/run/platform-maintenance/worker.sock")))
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
     templates = Environment(loader=FileSystemLoader(Path(__file__).parent / "templates"), autoescape=select_autoescape())
+    templates.globals.update(titles=forms.TITLES, error_message=forms.error_message)
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("httpcore").setLevel(logging.WARNING)
     cookie = "platform_admin_session"
@@ -64,11 +66,11 @@ def create_app(env=None, management=None, maintenance=None):
             raise AdminError("authentication_required", 401)
         return token, record[0]
 
-    async def body(request):
+    async def body(request, *, max_fields=32, max_bytes=65536):
         data = bytearray()
         async for chunk in request.stream():
             data.extend(chunk)
-            if len(data) > 65536:
+            if len(data) > max_bytes:
                 raise AdminError("request_too_large", 413)
         try:
             if request.headers.get("content-type", "").split(";")[0] == "application/json":
@@ -76,16 +78,16 @@ def create_app(env=None, management=None, maintenance=None):
                 if not isinstance(result, dict):
                     raise ValueError
                 return result
-            fields = parse_qs(data.decode(), keep_blank_values=True, max_num_fields=32, strict_parsing=True)
+            fields = parse_qs(data.decode(), keep_blank_values=True, max_num_fields=max_fields, strict_parsing=True)
             if any(len(values) != 1 for values in fields.values()):
                 raise ValueError
             return {key: values[0] for key, values in fields.items()}
         except (ValueError, UnicodeError):
             raise AdminError("invalid_request", 422) from None
 
-    async def mutation(request, *, login=False):
+    async def mutation(request, *, login=False, max_fields=32, max_bytes=65536):
         token, csrf = session(request, login=login)
-        data = await body(request)
+        data = await body(request, max_fields=max_fields, max_bytes=max_bytes)
         supplied = request.headers.get("x-csrf-token", data.pop("csrf", ""))
         if not isinstance(supplied, str) or not hmac.compare_digest(csrf, supplied):
             raise AdminError("csrf_rejected", 403)
@@ -213,19 +215,22 @@ def create_app(env=None, management=None, maintenance=None):
             raise AdminError("invalid_identifier", 422)
         return "/management/" + (kind if kind in {"services", "domains"} else "profiles/" + kind) + ("/" + key if key else "")
 
-    async def public_call(kind, method, key="", data=None):
+    def ensure_public(value):
         # Upstream schemas are strict; additionally reject known secret values
         # from user content, so a pasted internal token cannot enter a page.
         protected = (management.token, maintenance.token, auth.secret, *auth.protected_values())
-        def sensitive(value):
-            encoded = json.dumps(value, ensure_ascii=False)
-            return any(secret and json.dumps(secret, ensure_ascii=False)[1:-1] in encoded for secret in protected)
+        encoded = json.dumps(value, ensure_ascii=False)
+        if any(secret and json.dumps(secret, ensure_ascii=False)[1:-1] in encoded for secret in protected):
+            raise AdminError("sensitive_input_rejected", 422)
+
+    async def public_call(kind, method, key="", data=None):
         if data is not None:
-            if sensitive(data):
-                raise AdminError("sensitive_input_rejected", 422)
+            ensure_public(data)
         result = await management.call(method, resource_path(kind, key), data)
-        if sensitive(result):
-            raise AdminError("unsafe_upstream_response", 502)
+        try:
+            ensure_public(result)
+        except AdminError:
+            raise AdminError("unsafe_upstream_response", 502) from None
         return result
 
     @app.get("/admin/api/{kind}")
@@ -252,7 +257,7 @@ def create_app(env=None, management=None, maintenance=None):
     async def list_page(kind: str, request: Request):
         _, csrf = session(request)
         records = await public_call(kind, "GET")
-        return page("records.html", csrf, kind=kind, records=records)
+        return page("records.html", csrf, kind=kind, records=records, saved=request.query_params.get("saved") == "1")
 
     @app.post("/admin/toggle/{kind}/{key}")
     async def toggle_page(kind: str, key: str, request: Request):
@@ -263,30 +268,86 @@ def create_app(env=None, management=None, maintenance=None):
         if kind == "domains" and not patch["enabled"]:
             patch["default_entry"] = False
         await public_call(kind, "PATCH", key, patch)
-        return RedirectResponse("/admin/manage/" + kind, status_code=303)
+        return RedirectResponse("/admin/manage/" + kind + "?saved=1", status_code=303)
+
+    async def render_editor(kind, key, csrf, record, *, error="", invalid="", rows=None, status=200):
+        record = {**forms.defaults(kind), **record}
+        options = {}
+        for field in forms.FIELDS[kind]:
+            if field.control == "select":
+                records = await public_call(field.choices, "GET")
+                options[field.name] = forms.choices(field, records, record.get(field.name, ""))
+        if rows is None:
+            rows = record.get("reply_rules", [])
+        response = page("edit.html", csrf, kind=kind, key=key, record=record,
+                        identity=forms.identity(kind), fields=forms.FIELDS[kind], options=options,
+                        rows=rows or [""], error=error, invalid=invalid)
+        response.status_code = status
+        return response
 
     @app.get("/admin/edit/{kind}/{key:path}")
     async def edit_page(kind: str, key: str, request: Request):
         _, csrf = session(request)
         resource_path(kind, key if key != "_new" else "")
+        if kind == "runtime" and key == "_new":
+            return RedirectResponse("/admin/edit/runtime/default", status_code=303)
         record = {} if key == "_new" else await public_call(kind, "GET", key)
-        return page("edit.html", csrf, kind=kind, key=key, record=json.dumps(record, ensure_ascii=False, indent=2))
+        return await render_editor(kind, key, csrf, record)
 
     @app.post("/admin/edit/{kind}/{key:path}")
     async def save_page(kind: str, key: str, request: Request):
-        _, data = await mutation(request)
-        if set(data) != {"record"} or not isinstance(data["record"], str):
+        # Only HTML editors need room for 64 independently editable rules and
+        # URL-encoded Unicode. JSON API, login and other request limits stay as-is.
+        _, csrf = session(request)
+        _, data = await mutation(request, max_fields=72, max_bytes=4_194_304)
+        resource_path(kind, key if key != "_new" else "")
+        ensure_public(data)  # Never echo credentials even on a local form error.
+        if kind == "runtime" and key == "_new":
             raise AdminError("invalid_request", 422)
-        try:
-            record = json.loads(data["record"])
-        except ValueError:
-            raise AdminError("invalid_json", 422) from None
-        if not isinstance(record, dict):
-            raise AdminError("invalid_request", 422)
-        if key != "_new":
+        creating = key == "_new"
+        existing = {} if creating else await public_call(kind, "GET", key)
+        # Backward compatibility for pre-form HTML clients; no JSON editor is
+        # rendered, and the existing /admin/api/* contract is unchanged.
+        if set(data) == {"record"}:
+            if not isinstance(data["record"], str):
+                raise AdminError("invalid_request", 422)
+            try:
+                record = json.loads(data["record"])
+            except ValueError:
+                raise AdminError("invalid_json", 422) from None
+            if not isinstance(record, dict):
+                raise AdminError("invalid_request", 422)
+            record = {**existing, **record}
+        else:
+            draft, rows = forms.draft(kind, data, existing, creating=creating)
+            try:
+                action = data.get("_action", "save")
+                if action != "save" and (not isinstance(action, str) or kind != "prompts" or not re.fullmatch(r"add_rule|remove_rule_(?:[0-9]|[1-5][0-9]|6[0-3])", action)):
+                    raise forms.FormError("不支持的表单操作。")
+                record = forms.decode(kind, data, existing, creating=creating, validate=action == "save")
+                if action != "save":
+                    rows = rows or [""]
+                    if action == "add_rule":
+                        if len(rows) >= 64:
+                            raise forms.FormError("回复规则最多 64 条。", "reply_rules")
+                        rows.append("")
+                    else:
+                        index = int(action[12:])
+                        if index >= len(rows):
+                            raise forms.FormError("待删除的规则已不存在，请刷新后重试。", "reply_rules")
+                        rows.pop(index)
+                    return await render_editor(kind, key, csrf, draft, rows=rows)
+            except forms.FormError as error:
+                return await render_editor(kind, key, csrf, draft, rows=rows, error=error.message, invalid=error.field, status=422)
+        if not creating:
             record.pop("id" if kind != "domains" else "domain", None)
-        await public_call(kind, "POST" if key == "_new" else "PUT", "" if key == "_new" else key, record)
-        return RedirectResponse("/admin/manage/" + kind, status_code=303)
+        try:
+            await public_call(kind, "POST" if creating else "PUT", "" if creating else key, record)
+        except AdminError as error:
+            if error.code in {"sensitive_input_rejected", "unsafe_upstream_response"}:
+                raise
+            return await render_editor(kind, key, csrf, record, error=forms.error_message(error.code), status=error.status)
+        return RedirectResponse("/admin/manage/" + kind + "?saved=1", status_code=303)
 
     @app.get("/admin/maintenance")
     async def maintenance_page(request: Request):

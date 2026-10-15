@@ -1,12 +1,20 @@
 {% extends "base.html" %}{% block content %}
-<h2>{{ kind }} 配置</h2>
-{% if kind != 'runtime' %}<p><a href="/admin/edit/{{ kind }}/_new">创建配置</a></p>{% endif %}
-<table><thead><tr><th>标识</th><th>名称 / 状态</th><th>操作</th></tr></thead><tbody>
+<div class="page-heading"><h2>{{ titles[kind] }}</h2>{% if kind != 'runtime' %}<a class="button" href="/admin/edit/{{ kind }}/_new">创建{{ titles[kind] }}</a>{% endif %}</div>
+{% if saved %}<p class="notice success" role="status">配置已保存。可点击“编辑”重新查看当前配置。</p>{% endif %}
+{% if kind == 'runtime' %}<p class="hint">管理默认客服实例，不新增运行配置记录。</p>{% endif %}
+<div class="table-wrap"><table><thead><tr><th scope="col">{{ '域名' if kind == 'domains' else '标识' }}</th><th scope="col">配置摘要</th><th scope="col">操作</th></tr></thead><tbody>
 {% for record in records %}
 {% set key = record.domain if kind == 'domains' else record.id %}
-<tr><td>{{ key }}</td><td>{{ record.name | default('') }} {% if 'enabled' in record %}{{ '已启用' if record.enabled else '已禁用' }}{% endif %}</td><td>
-<a href="/admin/edit/{{ kind }}/{{ key }}">编辑</a>
-{% if kind in ['services', 'domains'] %}<form method="post" action="/admin/toggle/{{ kind }}/{{ key }}"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="enabled" value="{{ 'false' if record.enabled else 'true' }}"><button>{{ '禁用' if record.enabled else '启用' }}</button></form>{% endif %}
-</td></tr>
-{% else %}<tr><td colspan="3">暂无配置。</td></tr>{% endfor %}</tbody></table>
+<tr><td>{{ key }}</td><td>
+{% if kind == 'services' %}<strong>{{ record.name }}</strong> · {{ '已启用' if record.enabled else '已停用' }}
+{% elif kind == 'domains' %}绑定：{{ record.service_id }} · {{ '已启用' if record.enabled else '已停用' }}{% if record.default_entry %} · 默认入口{% endif %}
+{% elif kind == 'ai' %}{{ record.model }}
+{% elif kind == 'prompts' %}{{ record.reply_rules | default([]) | length }} 条回复规则
+{% elif kind == 'knowledge' %}{{ record.source or '未设置文件来源' }}
+{% elif kind == 'channels' %}{{ record.provider or '未设置提供方' }} · {{ '已启用' if record.enabled else '已停用' }}
+{% else %}默认实例：{{ record.default_service_id or '不选择（沿用默认规则）' }}{% endif %}
+</td><td><div class="row-actions"><a href="/admin/edit/{{ kind }}/{{ key }}">编辑</a>
+{% if kind in ['services', 'domains'] %}<form method="post" action="/admin/toggle/{{ kind }}/{{ key }}"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="enabled" value="{{ 'false' if record.enabled else 'true' }}"><button class="secondary small">{{ '停用' if record.enabled else '启用' }}</button></form>{% endif %}
+</div></td></tr>
+{% else %}<tr><td colspan="3">暂无配置。可先创建配置，再为客服实例设置关联。</td></tr>{% endfor %}</tbody></table></div>
 {% endblock %}
