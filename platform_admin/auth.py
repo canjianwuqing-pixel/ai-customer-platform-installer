@@ -19,6 +19,10 @@ class AdminError(Exception):
 
 
 class AuthStore:
+    # Recovery requires the revoked-prelogin guard in create_session(), not
+    # just a compatible password schema. Older images must be upgraded first.
+    recovery_protocol = 1
+
     def __init__(self, env):
         self.path = Path(env.get("ADMIN_DATA_PATH", "/app/data")) / "auth.sqlite3"
         self.username = "admin"
@@ -122,6 +126,10 @@ class AuthStore:
     def create_session(self, authenticated=False, old=""):
         token, csrf = secrets.token_urlsafe(32), secrets.token_urlsafe(32)
         with self.db() as db:
+            if authenticated and old and not db.execute("SELECT 1 FROM sessions WHERE id=?", (self.digest(old),)).fetchone():
+                # Recovery may have revoked the login session after password
+                # verification but before this separate session transaction.
+                raise AdminError("authentication_required", 401)
             db.execute("DELETE FROM sessions WHERE id=?", (self.digest(old),))
             # Bound abandoned login sessions without interfering with valid logins.
             db.execute("DELETE FROM sessions WHERE authenticated=0 AND rowid NOT IN (SELECT rowid FROM sessions WHERE authenticated=0 ORDER BY rowid DESC LIMIT 100)")

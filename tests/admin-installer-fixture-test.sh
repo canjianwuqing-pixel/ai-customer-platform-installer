@@ -75,12 +75,14 @@ for key in ADMIN_SESSION_SECRET ADMIN_MAINTENANCE_TOKEN SERVICE_MANAGEMENT_TOKEN
 done
 
 readonly CHECKSUM="$(sha256sum "${CONFIG_FILE}" | awk '{print $1}')"
+"${ADMIN_TEST_PYTHON:-python3}" "${TEST_ROOT}/tests/recovery_persistence_check.py" prepare "${TEST_TEMP}/admin-data"
 SYSTEM_OS_RELEASE_FILE="${TEST_ROOT}/tests/fixtures/os-release.ubuntu-22.04" \
   bash "${TEST_PROJECT}/install.sh" </dev/null >"${TEST_TEMP}/repeat-output.log" 2>&1
 config_load_installer_configuration "${CONFIG_FILE}" >/dev/null
 [[ "${ADMIN_PASSWORD}" == admin && "${ADMIN_SESSION_SECRET}" == "${INITIAL_SECRET}" ]]
 [[ "$(sha256sum "${CONFIG_FILE}" | awk '{print $1}')" == "${CHECKSUM}" ]]
 [[ -z "$(find "${TEST_PROJECT}" -name '.installer-admin-password-*' -print -quit)" ]]
+"${ADMIN_TEST_PYTHON:-python3}" "${TEST_ROOT}/tests/recovery_persistence_check.py" verify "${TEST_TEMP}/admin-data"
 
 # A failed fresh installation retains configured credentials on resume.
 readonly RETRY_PROJECT="${TEST_TEMP}/retry-project"

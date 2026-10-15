@@ -59,8 +59,10 @@ site="${NGINX_CONFIG_ROOT}/sites-available/ai-customer-platform-chatwoot"
 mkdir -p -- "$(dirname -- "${site}")" "${NGINX_CONFIG_ROOT}/sites-enabled"
 printf '%s\n' '# Managed by AI Customer Platform Installer.' '# Managed by AI Customer Platform Installer domain module.' >"${site}"
 cp -- "${site}" "${NGINX_CONFIG_ROOT}/sites-enabled/ai-customer-platform-chatwoot"
+"${ADMIN_TEST_PYTHON:-python3}" "${TEST_ROOT}/tests/recovery_persistence_check.py" prepare "${TEST_TEMP}/existing-admin-data"
 bash "${TEST_PROJECT}/upgrade.sh" --yes >"${TEST_TEMP}/upgrade.log" 2>&1
 config_load_installer_configuration "${CONFIG_FILE}" >/dev/null
+"${ADMIN_TEST_PYTHON:-python3}" "${TEST_ROOT}/tests/recovery_persistence_check.py" verify "${TEST_TEMP}/existing-admin-data"
 [[ "${ADMIN_ENABLED}" == true && "${AI_RUNTIME_BUILD}" == true && -n "${AI_SERVICE_IMAGE}" && ${#SERVICE_MANAGEMENT_TOKEN} -ge 32 ]]
 [[ "${DATABASE_PASSWORD}" == "${CORE_DATABASE}" && "${REDIS_PASSWORD}" == "${CORE_REDIS}" && "${SECRET_KEY_BASE}" == "${CORE_SECRET}" ]]
 grep -Fq 'build ai-service' "${DOCKER_FIXTURE_LOG}"

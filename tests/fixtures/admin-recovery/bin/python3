@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+[[ "$#" == 5 || "$#" == 6 ]]
+[[ "$1" == */platform_admin/recovery.py && "$2" == --project && "$4" == --service ]]
+[[ "${6:---manual}" == --manual ]]
+for key in ADMIN_PASSWORD ADMIN_PASSWORD_HASH ADMIN_SESSION_SECRET DATABASE_PASSWORD REDIS_PASSWORD SECRET_KEY_BASE SERVICE_MANAGEMENT_TOKEN; do
+  [[ -z "${!key+x}" ]] || { printf '%s\n' 'Configuration leaked into recovery environment.' >&2; exit 1; }
+done
+printf '%s\n' "$@" >"${RECOVERY_COMMAND_LOG}"

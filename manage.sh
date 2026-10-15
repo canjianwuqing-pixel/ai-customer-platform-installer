@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+set +x
 set -Eeuo pipefail
 
 readonly INSTALLER_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -26,7 +27,8 @@ manage_usage() {
     '  restart      Restart deployed services' \
     '  stop         Stop deployed services' \
     '  start        Start deployed services' \
-    '  health       Check containers, databases, and HTTP endpoints'
+    '  health       Check containers, databases, and HTTP endpoints' \
+    '  reset-admin-password [--manual]  Recover the local unified admin account'
 }
 
 manage_initialize() {
@@ -313,6 +315,16 @@ manage_health() {
 
 main() {
   local command_name="${1:-}"
+
+  if [[ "${command_name}" == reset-admin-password ]]; then
+    if (($# > 2)) || { (($# == 2)) && [[ "$2" != --manual ]]; }; then
+      log_error 'Usage: ./manage.sh reset-admin-password [--manual]'
+      return 1
+    fi
+    source "${INSTALLER_ROOT}/lib/admin_recovery.sh"
+    manage_reset_admin_password "${2:-}"
+    return $?
+  fi
 
   if (($# != 1)); then
     manage_usage >&2

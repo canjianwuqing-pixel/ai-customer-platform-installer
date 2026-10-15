@@ -297,9 +297,21 @@ bash install.sh
 ./manage.sh stop
 ./manage.sh start
 ./manage.sh health
+./manage.sh reset-admin-password
+./manage.sh reset-admin-password --manual
 ```
 
-`status` 显示 Chatwoot、Sidekiq、PostgreSQL、Redis 以及可选 AI Service 的运行状态；`health` 额外检查 PostgreSQL、Redis 和 HTTP 健康端点。未配置 `AI_SERVICE_IMAGE` 时，管理脚本只管理 Chatwoot，并显示“AI Service 未启用，跳过。”。管理脚本只读取现有 `.env` 和 Compose 文件，不会修改配置、生成 Secret、拉取镜像或执行数据库迁移。
+`status` 显示 Chatwoot、Sidekiq、PostgreSQL、Redis 以及可选 AI Service 的运行状态；`health` 额外检查 PostgreSQL、Redis 和 HTTP 健康端点。未配置 `AI_SERVICE_IMAGE` 时，管理脚本只管理 Chatwoot，并显示“AI Service 未启用，跳过。”。普通服务管理命令只读取现有 `.env` 和 Compose 文件，不会修改配置、生成 Secret、拉取镜像或执行数据库迁移。
+
+### 官方管理员密码恢复
+
+忘记统一后台密码时，在 Ubuntu 服务器上的本地控制终端运行 `./manage.sh reset-admin-password`（SSH 需分配 TTY）。命令生成 256 位安全随机密码，只在数据库确认提交成功后直接向控制终端显示一次，不写入标准输出、标准错误或 Docker 日志。请在安全终端妥善保存，不要录屏或启用终端会话记录。
+
+`./manage.sh reset-admin-password --manual` 隐藏输入新密码并要求二次确认；最少 6 位，不限制复杂格式。不支持命令行、环境变量、管道输入密码，也没有公开 HTTP 恢复接口。需要服务器 root、Docker 管理权限或经授权的 sudo；sudo 授权发生在输入新密码之前。仅允许本机 Unix Docker socket，不接受远程 Docker context。
+
+恢复始终针对已有统一 Admin 的 `admin` 账号：从配置读取 Compose 项目/服务标识，通过容器标签定位现有运行中的容器，并校验其可写持久化数据卷。不会创建替代容器或新认证库。后台未运行时先修复或启动原容器；缺少原数据库、卷、容器或无法识别的认证格式会安全拒绝。支持旧版密码哈希数据迁移。使用此新命令前需部署包含本功能的 Admin 镜像；若旧镜像尚不具备并发会话撤销保护，命令会在写入前拒绝并提示升级，避免仅更新宿主机脚本却仍运行旧认证代码。
+
+密码更新、登录失败次数/429 锁定清除、全部旧会话注销在同一个 SQLite 事务中完成，数据库失败会完整回滚。正在进行的旧密码登录也不能重新建立已撤销的会话。使用现有受保护的认证数据卷持久化，不修改 `.env`、Secret、Token、Chatwoot、Runtime、Service Management、知识库或聊天数据。重启、重复安装和升级仍以卷内密码为准，不回退到 `.env` 的初始化密码；备份包含此认证卷，应同样保密。若 Docker 连接在提交期间中断，命令不宣称成功，请检查本机服务后使用手动模式重试；不要通过删除数据卷恢复密码。
 
 手动创建备份、查看版本和恢复：
 

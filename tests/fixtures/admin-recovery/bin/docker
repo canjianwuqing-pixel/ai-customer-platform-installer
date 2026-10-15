@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+printf '%s\n' 'Recovery dispatch must not invoke deployment, Compose or container restart.' >&2
+exit 1
