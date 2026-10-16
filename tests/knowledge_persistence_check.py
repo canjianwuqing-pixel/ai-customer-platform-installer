@@ -32,11 +32,15 @@ with TestClient(application, headers={"authorization": "Bearer " + env["SERVICE_
                              ("knowledge", {"id": "shared", "source": "legacy/manual.txt", "max_characters": 12000})):
             assert api.post("/management/profiles/" + kind, json=record).status_code == 201
         for key, content in expected.items():
-            assert api.post("/management/services", json={"id": key, "name": "通用客服", "ai_config": "model", "knowledge_config": "shared"}).status_code == 201
+            assert api.post("/management/services", json={"id": key, "name": "通用客服", "enabled": True, "ai_config": "model"}).status_code == 201
             base = "/management/services/" + key
+            assert api.patch(base, json={"knowledge_config": "shared"}).status_code == 200
+            assert not api.get(base + "/knowledge").json()["exists"]
+            assert build_messages(resolver.resolve(key), "fixture message") == [{"role": "user", "content": "fixture message"}]
             revision = api.get(base + "/knowledge").json()["revision"]
             assert api.put(base + "/knowledge", json={"content": content, "revision": revision}).status_code == 200
-            assert api.post(base + "/enable").status_code == 200
+        assert api.post("/management/services", json={"id": "service_empty", "name": "尚无正文的客服",
+            "enabled": True, "ai_config": "model", "knowledge_config": "shared"}).status_code == 201
         assert api.post("/management/models/save", json={"id": "model", "profile": {"model": "fixture-model"}, "api_key": provider_key}).status_code == 200
         for service_id, inbox in (("service_a", 7), ("service_b", 8)):
             assert api.put("/management/chatwoot/" + service_id + "/connection", json={"base_url": "https://chatwoot.example.test", "account_id": 42, "api_token": protocol.token}).status_code == 200
@@ -56,6 +60,8 @@ with TestClient(application, headers={"authorization": "Bearer " + env["SERVICE_
         for service_id in expected:
             assert api.put("/management/chatwoot/" + service_id + "/enabled", json={"enabled": False}).status_code == 200
         application.state.chatwoot.pause("service_a", 100)
+        base = "/management/services/service_empty/knowledge"
+        assert api.put(base, json={"content": "备份后才创建的正文", "revision": api.get(base).json()["revision"]}).status_code == 200
     elif mode == "verify":
         for key, content in expected.items():
             result = api.get("/management/services/" + key + "/knowledge")
@@ -66,6 +72,12 @@ with TestClient(application, headers={"authorization": "Bearer " + env["SERVICE_
             messages = build_messages(resolver.resolve(key), "fixture message")
             assert messages[0]["content"] == "<knowledge_context>\n" + content + "\n</knowledge_context>"
             assert resolver.credential(resolver.resolve(key)) == provider_key
+            assert api.get("/management/services/" + key).json()["enabled"]
+        empty = api.get("/management/services/service_empty/knowledge").json()
+        assert not empty["exists"] and empty["content"] == ""
+        assert not (data / "services/service_empty/legacy/manual.txt").exists()
+        assert api.get("/management/services/service_empty").json()["enabled"]
+        assert build_messages(resolver.resolve("service_empty"), "fixture message") == [{"role": "user", "content": "fixture message"}]
         vault = CredentialVault(resolver)
         for service_id, inbox in (("service_a", 7), ("service_b", 8)):
             state = api.get("/management/chatwoot/" + service_id).json()

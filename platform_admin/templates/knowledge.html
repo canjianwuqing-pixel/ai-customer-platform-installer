@@ -11,7 +11,7 @@
 {% if saved and not error %}<p class="notice success" role="status">{{ '正文已保存。重新打开仍可读取，其他实例不受影响。' if selected else '配置已保存。可点击“编辑”重新查看当前配置。' }}</p>{% endif %}
 {% if document %}
 {% if document.knowledge_config is defined %}<p class="hint">知识库配置：{{ document.knowledge_config }} · 文件：{{ document.source }} · Runtime 最多读取 {{ document.max_characters }} 字符（正文上限 1 MiB UTF-8）。</p>
-{% if not document.exists %}<p class="hint">尚无正文文件，点击保存将首次创建。可先为停用的实例准备正文，再启用实例。</p>{% endif %}{% endif %}
+{% if not document.exists %}<p class="hint">尚无正文文件，当前按空知识处理。点击保存将安全创建，已启用的实例无需停用；保存后下次 AI 请求立即生效。</p>{% endif %}{% endif %}
 <form id="knowledge-form" method="post" action="/admin/knowledge" data-dirty="{{ 'true' if dirty else 'false' }}">
   <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="service_id" value="{{ selected }}"><input type="hidden" name="revision" value="{{ document.revision }}">
   <label for="knowledge-content">知识正文</label>

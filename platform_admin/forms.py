@@ -35,7 +35,7 @@ TITLES = {"services": "客服实例", "domains": "域名管理", "ai": "AI 模�
 FIELDS = {
     "services": (
         Field("name", "实例名称", required=True, maximum=128),
-        Field("enabled", "启用实例", "checkbox", False, hint="启用前必须关联有效的 AI 模型配置；如关联知识库，其文件也必须可读取。"),
+        Field("enabled", "启用实例", "checkbox", False, hint="启用前必须关联有效的 AI 模型配置。可直接关联知识库；正文尚未创建时按空知识处理，已有文件必须可安全读取。"),
         Field("ai_config", "AI 模型", "select", choices="ai"),
         Field("prompt_config", "提示词", "select", choices="prompts"),
         Field("knowledge_config", "知识库", "select", choices="knowledge"),

@@ -179,21 +179,36 @@ class RuntimeFixtures(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.json(), {"error": "configuration_unavailable"})
         self.assertEqual(self.requests, [])
 
-    async def test_missing_model_knowledge_or_credentials_are_explicit_errors(self):
-        for missing in ("model", "knowledge", "credential"):
+    async def test_missing_model_or_credentials_are_explicit_errors(self):
+        for missing in ("model", "credential"):
             with self.subTest(missing=missing):
                 self.configure("a")
                 self.env["KEY_A"] = "fixture-provider-key-a"
                 if missing == "model":
                     self.write(self.config / "ai" / "ai-a.yaml", {"api_key_env": "KEY_A"})
-                elif missing == "knowledge":
-                    (self.data / "services" / "service_a" / "context.txt").unlink()
                 else:
                     self.env["KEY_A"] = ""
                 async with self.client() as client:
                     response = await client.post("/chat", json={"service_id": "service_a", "message": "hello"})
                 self.assertEqual(response.status_code, 503)
         self.assertEqual(self.requests, [])
+
+    async def test_missing_knowledge_body_or_parent_is_empty_without_creating_files(self):
+        self.configure("a")
+        body = self.data / "services" / "service_a" / "context.txt"
+        body.unlink()
+        for remove_parent in (False, True):
+            if remove_parent:
+                body.parent.rmdir()
+            async with self.client() as client:
+                response = await client.post("/chat", json={"service_id": "service_a", "message": "hello"})
+            self.assertEqual(response.status_code, 200, response.text)
+            self.assertEqual(self.requests[-1][2]["messages"], [
+                {"role": "system", "content": "prompt-a\nrule-a"},
+                {"role": "user", "content": "hello"},
+            ])
+            self.assertFalse(body.exists())
+            self.assertEqual(body.parent.exists(), not remove_parent)
 
     def test_user_configuration_overrides_default_fields(self):
         self.configure("a")

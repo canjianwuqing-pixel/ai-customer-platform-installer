@@ -143,7 +143,7 @@ schema 2 → 3 事务性追加表；3 → 4 只为已有会话表追加生命周
 
 ### 按客服实例编辑知识正文
 
-在 `/admin/manage/knowledge` 选择实例、点击“加载正文”，即可首次创建、读取、修改、保存或清空纯文本正文。保存成功有明确反馈，重新打开仍能读取；未保存修改时离页会提示。新知识库配置预填 `knowledge.txt`，无需 SSH 或填写绝对服务器目录；已有 `source` 不自动改写。先创建知识库配置、为**停用**的实例设置关联并保存正文，再启用实例。未关联配置或原 `source` 为空时，页面提示先设置关联/文件名，不擅自改变旧配置。
+在 `/admin/manage/knowledge` 选择实例、点击“加载正文”，即可首次创建、读取、修改、保存或清空纯文本正文。保存成功有明确反馈，重新打开仍能读取；未保存修改时离页会提示。新知识库配置预填 `knowledge.txt`，无需 SSH 或填写绝对服务器目录；已有 `source` 不自动改写。**已启用的实例也可直接关联新知识库，无需先停用。**安全路径下正文文件或其目录尚不存在时按空知识处理，关联校验和 AI 请求不会自动创建文件；首次保存正文时，沿用安全的目录创建及原子写入流程，下次请求立即读取。只有文件不存在可以为空，权限、链接、非普通文件和 UTF-8 读取错误仍然拒绝；引用的配置档缺失仍属无效配置。未关联配置或原 `source` 为空时，页面提示先设置关联/文件名，不擅自改变旧配置。
 
 正文实际存储在现有 Runtime 的 `ai_service_data` 持久化卷：`AI_SERVICE_DATA_PATH/services/<service_id>/<source>`。不同实例即使引用同一个 `knowledge_config`，也只共享相对文件名和 `max_characters`，不共享正文。清空保留原文件路径及关联；切换 `source` 不移动或删除旧文件。API/YAML 优先级、SQLite schema 和其他配置字段均不变。
 
@@ -271,7 +271,7 @@ services:
     channel_config: ""
 ```
 
-`ai/ai-a.yaml` 配置 `model`、`api_base_url` 和 `api_key_env`；后者只保存凭据的环境变量名。`prompts/prompt-a.yaml` 配置 `system_prompt` 和 `reply_rules` 字符串列表。`knowledge/knowledge-a.yaml` 配置 `source` 和 `max_characters`，`source` 是相对 `AI_SERVICE_DATA_PATH/services/service_a/` 的 UTF-8 文本文件路径。B 实例使用自己的引用和数据目录。空的提示词/知识库引用表示不附加该上下文；引用非空时文件必须存在。当前知识库实现为受大小限制的本地文本上下文，不包含向量检索。
+`ai/ai-a.yaml` 配置 `model`、`api_base_url` 和 `api_key_env`；后者只保存凭据的环境变量名。`prompts/prompt-a.yaml` 配置 `system_prompt` 和 `reply_rules` 字符串列表。`knowledge/knowledge-a.yaml` 配置 `source` 和 `max_characters`，`source` 是相对 `AI_SERVICE_DATA_PATH/services/service_a/` 的 UTF-8 文本文件路径。B 实例使用自己的引用和数据目录。空的提示词/知识库引用表示不附加该上下文；引用非空时对应配置档必须存在，但安全路径下尚未创建的正文按空知识处理，不阻止关联和运行。当前知识库实现为受大小限制的本地文本上下文，不包含向量检索。
 
 省略 `service_id` 时，优先使用 API Runtime default 配置，其次为环境变量 `AI_DEFAULT_SERVICE_ID`；未指定且只有一个启用实例时使用该实例。多个实例启用时必须明确设置默认实例。只有实例集合完全为空时，才使用已有的 `AI_MODEL`、`OPENAI_API_KEY` 环境变量，以及可选的 `AI_SYSTEM_PROMPT` 和 `AI_API_BASE_URL`，保留单实例环境变量模式。显式无效、未知、禁用实例或缺失配置会返回明确错误，不会借用其他实例配置。
 
@@ -304,7 +304,7 @@ Service Management API 是统一 AI 客服管理后台的后端基础，已集�
 | Domain | `GET /management/domains/{domain}`、`PUT`、`PATCH`、`DELETE` 同一路径 | 查询、重新绑定或修改、删除 |
 | Domain | `POST /management/domains/{domain}/enable`、`/disable` | 启用、禁用 |
 
-Service 创建请求使用现有七个字段：`id`、`name`、`enabled`、`ai_config`、`prompt_config`、`knowledge_config`、`channel_config`。`id` 与 `name` 必填，`enabled` 默认 `false`，四个配置引用默认空。`PATCH` 只提交需修改字段，`PUT` 提交完整字段；ID 不可修改。启用的实例必须能加载引用的模型、提示词和知识文件，配置无效时拒绝提交并保留原配置；禁用实例可先保存未完成的引用。提供者凭据仍由环境变量提供，不要求通过管理 API 设置。
+Service 创建请求使用现有七个字段：`id`、`name`、`enabled`、`ai_config`、`prompt_config`、`knowledge_config`、`channel_config`。`id` 与 `name` 必填，`enabled` 默认 `false`，四个配置引用默认空。`PATCH` 只提交需修改字段，`PUT` 提交完整字段；ID 不可修改。启用的实例必须能加载引用的模型、提示词及知识库配置；正文尚不存在时允许关联，按空知识运行，已有文件必须可安全读取。配置无效时拒绝提交并保留原配置；禁用实例可先保存未完成的引用。提供者凭据仍支持沿用环境变量，不要求通过管理 API 设置。
 
 Domain 创建请求使用 `domain`、`service_id`、`enabled`、`default_entry`，后两项默认 `false`。域名会统一为小写，拒绝 URL、通配符、IP 和无效标签。绑定的实例必须存在，启用域名只能指向启用实例，最多保留一个启用的默认入口。有域名引用的实例不能删除；有启用域名引用的实例不能禁用。禁用默认域名的专用接口会同时清除其 `default_entry` 标记。
 

@@ -69,6 +69,15 @@ def _parent(path, *, create=False):
                 _not_link(parent)
                 if create:
                     parent.mkdir(mode=0o700, exist_ok=True)
+                else:
+                    try:
+                        info = parent.stat(follow_symlinks=False)
+                    except FileNotFoundError:
+                        continue
+                    # Windows may report ENOENT for a child of a regular
+                    # file. Do not mistake that invalid path for a new body.
+                    if not stat.S_ISDIR(info.st_mode):
+                        raise NotADirectoryError
             _not_link(path)
             yield None
     finally:
@@ -113,6 +122,12 @@ def read_runtime_knowledge(config):
             with io.TextIOWrapper(os.fdopen(_open(config.knowledge_source, parent), "rb"),
                                   encoding="utf-8") as stream:
                 return stream.read(config.knowledge_max_characters)
+    except FileNotFoundError:
+        # A validated instance path may not have a body (or parent) yet.
+        # Association/runtime reads are read-only; the editor creates it on
+        # first save. Do not treat permission, link, type or UTF-8 errors as
+        # empty knowledge: they must still fail closed below.
+        return ""
     except (OSError, UnicodeError, RuntimeFailure):
         raise RuntimeFailure("knowledge_source_unavailable") from None
 

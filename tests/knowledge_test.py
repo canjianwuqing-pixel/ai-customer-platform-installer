@@ -13,9 +13,9 @@ from fastapi.testclient import TestClient
 import admin_test
 from admin_forms_test import Editor
 from ai_runtime.app import create_app
-from ai_runtime.config import ServiceResolver
+from ai_runtime.config import RuntimeFailure, ServiceResolver
 from ai_runtime.engine import ChatProvider, RuntimeEngine
-from ai_runtime.knowledge import KnowledgeStore, MAX_CONTENT_BYTES
+from ai_runtime.knowledge import KnowledgeStore, MAX_CONTENT_BYTES, read_runtime_knowledge
 
 
 class KnowledgeFixtures(unittest.TestCase):
@@ -63,6 +63,169 @@ class KnowledgeFixtures(unittest.TestCase):
         response = self.client.get("/admin/manage/knowledge", params={"service_id": service})
         self.assertEqual(response.status_code, 200, response.text)
         return Editor(response.text, "knowledge-form").data
+
+    def enable_without_knowledge(self, service="service_a"):
+        self.assertEqual(self.api.patch("/management/services/" + service, json={"knowledge_config": ""}).status_code, 200)
+        self.assertEqual(self.api.post("/management/services/" + service + "/enable").status_code, 200)
+
+    def chat(self, service="service_a"):
+        response = self.api.post("/chat", json={"service_id": service, "message": "知识正文测试"},
+                                 headers={"authorization": "Bearer fixture-internal"})
+        self.assertEqual(response.status_code, 200, response.text)
+        return self.provider_requests[-1]["messages"]
+
+    def test_enabled_instance_first_association_is_empty_until_first_safe_save(self):
+        self.enable_without_knowledge()
+        with patch("ai_runtime.knowledge.read_runtime_knowledge", wraps=read_runtime_knowledge) as reader:
+            result = self.api.patch("/management/services/service_a", json={"knowledge_config": "shared"})
+            self.assertEqual(reader.call_count, 1, "Association must still perform real runtime validation")
+        self.assertEqual(result.status_code, 200, result.text)
+        self.assertTrue(result.json()["enabled"])
+        self.assertFalse(self.path().parent.exists(), "Validation must not create directories or files")
+        self.assertEqual(self.chat(), [
+            {"role": "system", "content": "unchanged policy\nunchanged rule"},
+            {"role": "user", "content": "知识正文测试"},
+        ])
+        first = self.get()
+        self.assertFalse(first["exists"])
+        self.write("首次保存后立即加入知识上下文")
+        self.assertEqual(self.chat()[1]["content"], "<knowledge_context>\n" + "首次保存后立即加入知识上下文"[:12] + "\n</knowledge_context>")
+        self.write("修改后下次请求读取最新正文")
+        self.assertEqual(self.chat()[1]["content"], "<knowledge_context>\n" + "修改后下次请求读取最新正文"[:12] + "\n</knowledge_context>")
+        self.assertTrue(self.api.get("/management/services/service_a").json()["enabled"])
+        if os.name == "posix":
+            self.assertEqual(stat.S_IMODE(self.path().stat().st_mode), 0o600)
+            self.assertEqual(stat.S_IMODE(self.path().parent.stat().st_mode), 0o700)
+
+    def test_runtime_reader_returns_empty_for_missing_leaf_or_parent_without_writes(self):
+        record = self.api.get("/management/services/service_a").json()
+        config = self.resolver.runtime_for_instance(record)
+        self.assertEqual(read_runtime_knowledge(config), "")
+        self.assertFalse(self.path().parent.exists())
+        self.path().parent.mkdir(parents=True)
+        self.assertEqual(read_runtime_knowledge(config), "")
+        self.assertFalse(self.path().exists())
+
+    def test_enabled_instance_switch_and_profile_update_preserve_all_old_files(self):
+        original = "\ufeff原有知识正文\r\n全部保留".encode("utf-8")
+        self.path().parent.mkdir(parents=True)
+        self.path().write_bytes(original)
+        self.assertEqual(self.api.post("/management/services/service_a/enable").status_code, 200)
+        self.assertEqual(self.api.post("/management/profiles/knowledge", json={
+            "id": "new_knowledge", "source": "new/knowledge.txt", "max_characters": 100}).status_code, 201)
+        result = self.api.patch("/management/services/service_a", json={"knowledge_config": "new_knowledge"})
+        self.assertEqual(result.status_code, 200, result.text)
+        self.assertTrue(result.json()["enabled"])
+        self.assertEqual(self.path().read_bytes(), original)
+        self.assertFalse(self.get()["exists"])
+        self.assertNotIn("knowledge_context", str(self.chat()))
+        self.write("新知识正文")
+        new_file = self.resolver.data_dir / "services/service_a/new/knowledge.txt"
+        result = self.api.put("/management/profiles/knowledge/new_knowledge", json={"source": "next/body.txt", "max_characters": 100})
+        self.assertEqual(result.status_code, 200, result.text)
+        self.assertFalse(self.get()["exists"])
+        self.assertEqual(new_file.read_text(encoding="utf-8"), "新知识正文")
+        self.assertEqual(self.path().read_bytes(), original)
+        self.assertEqual(self.api.patch("/management/services/service_a", json={"knowledge_config": "shared"}).status_code, 200)
+        self.assertEqual(self.get()["content"].encode("utf-8"), original)
+        self.assertIn(original.decode("utf-8").replace("\r\n", "\n")[:12], self.chat()[1]["content"])
+
+    def test_enabled_instances_share_missing_profile_but_not_content_after_restart(self):
+        for service in ("service_a", "service_b"):
+            self.enable_without_knowledge(service)
+            result = self.api.patch("/management/services/" + service, json={"knowledge_config": "shared"})
+            self.assertEqual(result.status_code, 200, result.text)
+            self.assertNotIn("knowledge_context", str(self.chat(service)))
+        self.write("甲实例独立知识", "service_a")
+        self.assertEqual(self.get("service_b")["content"], "")
+        self.assertFalse(self.get("service_b")["exists"])
+        self.write("乙实例独立知识", "service_b")
+        resolver = ServiceResolver(self.resolver.config_dir, self.resolver.data_dir, self.resolver.env)
+        for service, expected in (("service_a", "甲实例独立知识"), ("service_b", "乙实例独立知识")):
+            self.assertEqual(KnowledgeStore(resolver).content(service)["content"], expected)
+            self.assertEqual(read_runtime_knowledge(resolver.resolve(service)), expected)
+            self.assertEqual(self.chat(service)[1]["content"], "<knowledge_context>\n" + expected + "\n</knowledge_context>")
+
+    def test_permission_io_and_invalid_utf8_are_not_silently_empty(self):
+        self.enable_without_knowledge()
+        self.path().parent.mkdir(parents=True)
+        self.path().write_bytes(b"\xff\xfe")
+        result = self.api.patch("/management/services/service_a", json={"knowledge_config": "shared"})
+        self.assertEqual(result.status_code, 422)
+        self.assertEqual(self.path().read_bytes(), b"\xff\xfe")
+        self.assertEqual(self.api.get("/management/services/service_a").json()["knowledge_config"], "")
+        self.path().write_text("现有有效正文", encoding="utf-8")
+        for error in (PermissionError("denied"), OSError("read failed")):
+            with patch("ai_runtime.knowledge._open", side_effect=error):
+                result = self.api.patch("/management/services/service_a", json={"knowledge_config": "shared"})
+            self.assertEqual(result.status_code, 422, result.text)
+            self.assertEqual(self.api.get("/management/services/service_a").json()["knowledge_config"], "")
+        self.assertEqual(self.path().read_text(encoding="utf-8"), "现有有效正文")
+        self.assertEqual(self.api.patch("/management/services/service_a", json={"knowledge_config": "shared"}).status_code, 200)
+        for error in (PermissionError("denied"), OSError("read failed")):
+            with patch("ai_runtime.knowledge._open", side_effect=error):
+                response = self.api.post("/chat", json={"service_id": "service_a", "message": "不能忽略读错误"},
+                    headers={"authorization": "Bearer fixture-internal"})
+            self.assertEqual(response.status_code, 503)
+            self.assertEqual(response.json()["error"], "knowledge_source_unavailable")
+        self.assertEqual(self.provider_requests, [])
+
+    def test_missing_file_exception_does_not_bypass_link_or_file_type_validation(self):
+        self.enable_without_knowledge()
+        self.path().parent.mkdir(parents=True)
+        missing = self.fixture.root / "must-not-create.txt"
+        self.path().symlink_to(missing)
+        self.assertEqual(self.api.patch("/management/services/service_a", json={"knowledge_config": "shared"}).status_code, 422)
+        self.assertFalse(missing.exists())
+        self.path().unlink()
+        self.path().mkdir()
+        self.assertEqual(self.api.patch("/management/services/service_a", json={"knowledge_config": "shared"}).status_code, 422)
+        self.path().rmdir()
+        self.path().parent.rmdir()
+        self.path().parent.write_text("父路径不是目录", encoding="utf-8")
+        self.assertEqual(self.api.patch("/management/services/service_a", json={"knowledge_config": "shared"}).status_code, 422)
+        self.path().parent.unlink()
+        self.path().parent.symlink_to(self.fixture.root / "missing-directory", target_is_directory=True)
+        self.assertEqual(self.api.patch("/management/services/service_a", json={"knowledge_config": "shared"}).status_code, 422)
+        self.path().parent.unlink()
+        self.assertEqual(self.api.get("/management/services/service_a").json()["knowledge_config"], "")
+
+    def test_link_added_after_configuration_validation_is_still_rejected(self):
+        record = self.api.get("/management/services/service_a").json()
+        config = self.resolver.runtime_for_instance(record)
+        self.path().parent.mkdir(parents=True)
+        self.path().symlink_to(self.fixture.root / "missing-file.txt")
+        with self.assertRaises(RuntimeFailure) as failure:
+            read_runtime_knowledge(config)
+        self.assertEqual(failure.exception.code, "knowledge_source_unavailable")
+        self.path().unlink()
+        self.path().parent.rmdir()
+        self.path().parent.symlink_to(self.fixture.root / "missing-directory", target_is_directory=True)
+        with self.assertRaises(RuntimeFailure) as failure:
+            read_runtime_knowledge(config)
+        self.assertEqual(failure.exception.code, "knowledge_source_unavailable")
+        self.path().parent.unlink()
+
+    def test_first_save_failure_and_empty_save_keep_enabled_association_safe(self):
+        self.enable_without_knowledge()
+        self.assertEqual(self.api.patch("/management/services/service_a", json={"knowledge_config": "shared"}).status_code, 200)
+        with patch("ai_runtime.knowledge.os.replace", side_effect=OSError("disk error")):
+            self.write("未提交的首次正文", expected=503)
+        self.assertFalse(self.path().exists())
+        self.assertEqual(list(self.path().parent.glob(".knowledge-*")), [])
+        self.assertFalse(self.get()["exists"])
+        self.write("")
+        self.assertTrue(self.get()["exists"])
+        self.assertEqual(self.path().read_bytes(), b"")
+        self.assertNotIn("knowledge_context", str(self.chat()))
+        self.assertTrue(self.api.get("/management/services/service_a").json()["enabled"])
+
+    def test_missing_profile_is_not_confused_with_missing_body(self):
+        self.enable_without_knowledge()
+        result = self.api.patch("/management/services/service_a", json={"knowledge_config": "nonexistent_profile"})
+        self.assertEqual(result.status_code, 422)
+        self.assertEqual(result.json()["error"], "invalid_runtime_configuration")
+        self.assertEqual(self.api.get("/management/services/service_a").json()["knowledge_config"], "")
 
     def test_first_create_update_clear_and_preserve_legacy_source(self):
         first = self.get()

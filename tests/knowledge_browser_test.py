@@ -6,6 +6,7 @@ import unittest
 from urllib.parse import urlsplit
 
 import admin_forms_browser_test as browser_forms
+from ai_runtime.engine import build_messages
 
 
 class KnowledgeBrowserFixtures(unittest.TestCase):
@@ -27,6 +28,32 @@ class KnowledgeBrowserFixtures(unittest.TestCase):
         self.assertEqual(posted.value.status, 303)
         self.page.wait_for_url(self.origin + "/admin/manage/knowledge?service_id=service_a&saved=1")
         self.assertIn("正文已保存", self.page.get_by_role("status").inner_text())
+
+    def test_enabled_instance_associates_new_knowledge_in_native_form_and_saves_body(self):
+        self.assertEqual(self.api.post("/management/profiles/ai", json={"id": "model", "model": "configured-model"}).status_code, 201)
+        self.assertEqual(self.api.post("/management/profiles/knowledge", json={
+            "id": "shared", "source": "new/knowledge.txt", "max_characters": 12}).status_code, 201)
+        self.assertEqual(self.api.post("/management/services", json={"id": "service_a", "name": "客服实例",
+            "enabled": True, "ai_config": "model"}).status_code, 201)
+        browser_forms.VisualBrowserFixtures.open(self, "services", "service_a")
+        self.assertTrue(self.page.locator('#config-form [name="enabled"]').is_checked())
+        self.page.locator('#config-form [name="knowledge_config"]').select_option("shared")
+        browser_forms.VisualBrowserFixtures.save(self, "services")
+        record = self.api.get("/management/services/service_a").json()
+        self.assertTrue(record["enabled"])
+        self.assertEqual(record["knowledge_config"], "shared")
+        self.assertNotIn("knowledge_context", str(build_messages(self.resolver.resolve("service_a"), "probe")))
+        self.page.goto(self.origin + "/admin/manage/knowledge?service_id=service_a")
+        self.page.get_by_text("尚无正文文件，当前按空知识处理。", exact=False).wait_for()
+        self.assertEqual(self.page.locator("#knowledge-content").input_value(), "")
+        text = "网页首次创建知识正文，保存后立即读取"
+        self.page.locator("#knowledge-content").fill(text)
+        self.save()
+        self.page.reload()
+        self.assertEqual(self.page.locator("#knowledge-content").input_value(), text)
+        self.assertEqual(build_messages(self.resolver.resolve("service_a"), "probe")[0]["content"],
+                         "<knowledge_context>\n" + text[:12] + "\n</knowledge_context>")
+        self.assertTrue(self.api.get("/management/services/service_a").json()["enabled"])
 
     def test_native_create_edit_clear_isolation_and_responsive_layout(self):
         self.prepare()
