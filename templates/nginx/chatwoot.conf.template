@@ -1,8 +1,14 @@
 # Managed by AI Customer Platform Installer.
+# Managed Chatwoot API header policy (http context).
+# This file is included inside http {}. Default virtual hosts must inherit this
+# before Host is parsed; a server-only setting loses headers arriving earlier.
+underscores_in_headers on;
+
 server {
     listen {{NGINX_LISTEN_PORT}};
     listen [::]:{{NGINX_LISTEN_PORT}};
     server_name {{DOMAIN}};
+    underscores_in_headers on;
 
     client_max_body_size {{NGINX_CLIENT_MAX_BODY_SIZE}};
     # PLATFORM_ADMIN_LOCATION

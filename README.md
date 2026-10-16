@@ -37,6 +37,16 @@
 
 Chatwoot、pgvector/PostgreSQL 和 Redis 镜像均通过 `.env` 使用明确版本标签。PostgreSQL 与 Redis 不发布宿主机端口；Rails 默认只绑定到 `.env` 配置的本地地址，后续由 Nginx 模块接入。
 
+### Chatwoot API 请求头与旧 Nginx 配置迁移
+
+Chatwoot 使用 `api_access_token` 请求头。Nginx 默认将带下划线的请求头视为无效并过滤，Token 本身正确也会因此收到 401。HTTP / HTTPS 模板均开启 `underscores_in_headers on;`：托管站点文件由 Ubuntu 的 `sites-enabled/*` **在 `http {}` 内引入**，文件顶层设置让已有默认虚拟主机也继承该规则，覆盖 Token 出现在 Host 之前及 HTTPS 无匹配 SNI 的请求；新模板内各 server 也明确开启。依据 [Nginx 请求头指令](https://nginx.org/en/docs/http/ngx_http_core_module.html#underscores_in_headers)和[虚拟主机选择顺序](https://nginx.org/en/docs/http/server_names.html#virtual_server_selection)，不能只在某个 location 或命名站点里补发一个已被过滤的头。
+
+无需手工修改 Nginx、密码或 Token。执行正常 `bash install.sh` 即可应用该策略，不要求更改镜像版本；已有部署按原流程执行 `bash upgrade.sh`（仍需不同的固定目标版本）时也自动迁移。重复安装已有 HTTPS 站点时只补齐头解析策略，保留其证书路径、TLS、重定向、Admin / Webhook 代理和 `/cable` 设置；升级在未启用 Admin 时也会刷新 Nginx。旧备份站点配置经过同一应用流程，因此恢复不会重新引入这一缺陷。
+
+不抢占其他站点的 `default_server`，不修改 `nginx.conf`，不关闭其他非法头校验。候选配置仍先经过 `nginx -t`，成功才 reload，失败则恢复原配置。若自定义 Nginx 在同一 http 上下文已显式声明同名指令或在默认站点显式关闭下划线头，需要先解决其自定义策略冲突；安装器不会擅自改写非托管站点。标准 Ubuntu Nginx 默认配置无需额外操作。只更新此修复无需重建 Runtime / Admin 镜像。
+
+`tests/chatwoot-headers-fixture-test.sh` 覆盖 HTTP/HTTPS 生成、重复安装、Chatwoot-only 升级、旧备份恢复和语法失败回滚；配套真实 Nginx + TLS 代理测试使用临时 Token 和 Chatwoot 认证替身，验证同一个 Token 直连及经代理均成功、默认主机/头顺序/SNI、非法头过滤、错误 Token 拒绝、HTTPS 重定向及 WebSocket。实际服务器和 Chatwoot 数据均不参与这些隔离测试。
+
 AI Service 和统一后台不是 Chatwoot 基础安装必选项。未配置 AI 镜像且未启用统一后台时，安装器跳过全部 AI 步骤。启用统一后台参见下一节；高级用户仍可覆盖固定标签或 digest 的镜像。OpenAI API Key 不属于安装必填项，可在统一后台安全配置，也兼容 Runtime 已有环境变量凭据。
 
 ## 统一配置生命周期与旧部署升级

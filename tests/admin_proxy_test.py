@@ -155,6 +155,9 @@ class NginxHTTPSFixtures(unittest.TestCase):
     def extra_nginx_locations(self):
         return ""
 
+    def leading_nginx_servers(self):
+        return ""
+
     def start_proxy(self):
         self.certificate = self.directory / "certificate.pem"
         key = self.directory / "certificate.key"
@@ -170,7 +173,7 @@ class NginxHTTPSFixtures(unittest.TestCase):
                   "NGINX_CLIENT_MAX_BODY_SIZE": "1m", "NGINX_UPSTREAM_HOST": "127.0.0.1",
                   "CHATWOOT_HTTP_PORT": str(self.backend_port), "NGINX_PROXY_READ_TIMEOUT_SECONDS": "5",
                   "ADMIN_UPSTREAM_HOST": "127.0.0.1", "AI_ADMIN_HTTP_PORT": str(self.backend_port)}
-        site = (ROOT / "templates/domain/chatwoot-https.conf.template").read_text(encoding="utf-8")
+        site = (ROOT / getattr(self, "site_template", "templates/domain/chatwoot-https.conf.template")).read_text(encoding="utf-8")
         admin = (ROOT / "templates/nginx/admin.conf.template").read_text(encoding="utf-8")
         site = site.replace("# PLATFORM_ADMIN_LOCATION", admin + self.extra_nginx_locations())
         for name, value in values.items():
@@ -185,7 +188,7 @@ class NginxHTTPSFixtures(unittest.TestCase):
                           "events { worker_connections 64; }\nhttp { access_log off;\n"
                           "client_body_temp_path temp/client; proxy_temp_path temp/proxy;\n"
                           "fastcgi_temp_path temp/fastcgi; uwsgi_temp_path temp/uwsgi; scgi_temp_path temp/scgi;\n"
-                          + site + self.extra_nginx_servers() + "\n}\n", encoding="utf-8")
+                          + self.leading_nginx_servers() + site + self.extra_nginx_servers() + "\n}\n", encoding="utf-8")
         (self.directory / "logs").mkdir()
         (self.directory / "temp").mkdir()
         options = {"cwd": self.directory, "stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL}

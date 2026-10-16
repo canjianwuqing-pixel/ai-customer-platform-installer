@@ -213,7 +213,37 @@ nginx_rollback_site_config() {
   log_warn "[nginx] Restored the previously active site configuration."
 }
 
+# Legacy HTTPS sites and restored backups must receive the same parsing policy
+# without rewriting their certificate paths, proxy locations or other settings.
+nginx_prepare_api_header_policy() {
+  local input_file="$1" output_file="$2"
+  if run_as_root grep -Fxq '# Managed Chatwoot API header policy (http context).' "${input_file}" &&
+    run_as_root grep -Fxq 'underscores_in_headers on;' "${input_file}"; then
+    run_as_root cat -- "${input_file}" >"${output_file}"
+  else
+    {
+      printf '%s\n' '# Managed Chatwoot API header policy (http context).' \
+        '# Included in http {}; default virtual hosts must inherit this before Host is parsed.' \
+        'underscores_in_headers on;' ''
+      run_as_root cat -- "${input_file}"
+    } >"${output_file}"
+  fi
+}
+
 nginx_apply_candidate() {
+  local prepared_file result
+  prepared_file="$(mktemp)" || return 1
+  if ! nginx_prepare_api_header_policy "$1" "${prepared_file}"; then
+    rm -f -- "${prepared_file}"
+    log_error 'Failed to prepare the Chatwoot API request-header policy.'
+    return 1
+  fi
+  if nginx_apply_prepared_candidate "${prepared_file}"; then result=0; else result=$?; fi
+  rm -f -- "${prepared_file}"
+  return "${result}"
+}
+
+nginx_apply_prepared_candidate() {
   local candidate_file="$1"
   local backup_path=""
   local staged_path="${NGINX_SITE_CONFIG_PATH}.new.$$"
@@ -351,9 +381,9 @@ nginx_configure() {
 
   if [[ -f "${NGINX_SITE_CONFIG_PATH}" ]] &&
     run_as_root grep -Fq -- '# Managed by AI Customer Platform Installer domain module.' "${NGINX_SITE_CONFIG_PATH}"; then
-    log_ok "[nginx] Domain module already manages the HTTPS site; preserving its active configuration."
-    nginx_test_configuration
-    return 0
+    log_info "[nginx] Preserving the HTTPS site while updating its API request-header policy."
+    nginx_apply_candidate "${NGINX_SITE_CONFIG_PATH}"
+    return $?
   fi
 
   candidate_file="$(mktemp)"

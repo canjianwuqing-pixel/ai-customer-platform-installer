@@ -228,13 +228,14 @@ upgrade_restart_application_services() {
     if [[ "${ADMIN_ENABLED:-false}" == true ]]; then admin_install_worker || return 1; fi
     ai_service_compose up -d --no-deps --force-recreate "${ai_services[@]}" || return 1
   fi
-  if [[ "${ADMIN_ENABLED:-false}" == true ]]; then
-    domain_initialize_config
-    if run_as_root grep -Fq '# Managed by AI Customer Platform Installer domain module.' "${NGINX_SITE_CONFIG_PATH}"; then
-      domain_activate_https || return 1
-    else
-      nginx_configure || return 1
-    fi
+  domain_initialize_config
+  if [[ "${ADMIN_ENABLED:-false}" == true ]] &&
+    run_as_root grep -Fq '# Managed by AI Customer Platform Installer domain module.' "${NGINX_SITE_CONFIG_PATH}"; then
+    domain_activate_https || return 1
+  else
+    # Chatwoot API headers also need migration on Chatwoot-only deployments.
+    # nginx_configure preserves existing HTTPS settings instead of downgrading.
+    nginx_configure || return 1
   fi
 }
 
