@@ -277,6 +277,10 @@ def create_app(env=None, management=None, maintenance=None):
             if not re.fullmatch(r"[a-z][a-z0-9_-]{0,63}", selected):
                 raise AdminError("invalid_identifier", 422)
             state = await integration_call("GET", "chatwoot/" + selected)
+            # Keep the existing INTERNAL API contract for old clients, but do
+            # not pass per-visitor identifiers into the Admin presentation.
+            state.pop("conversations", None)
+            state["errors"] = [{"error": item["error"]} for item in state.get("errors", [])]
             if state.get("configured"):
                 try:
                     inboxes = await integration_call("GET", "chatwoot/" + selected + "/inboxes")
@@ -317,8 +321,6 @@ def create_app(env=None, management=None, maintenance=None):
                 await integration_call("POST", path + "/bind", {"inbox_id": int(data["inbox_id"]), "public_url": origin})
             elif action == "toggle" and set(data) == {"action", "service_id", "enabled"} and data["enabled"] in {"true", "false"}:
                 await integration_call("PUT", path + "/enabled", {"enabled": data["enabled"] == "true"})
-            elif action == "resume" and set(data) == {"action", "service_id", "conversation_id"} and re.fullmatch(r"[1-9][0-9]{0,9}", data["conversation_id"]):
-                await integration_call("POST", path + "/conversations/" + data["conversation_id"] + "/resume", {})
             else:
                 raise AdminError("invalid_request", 422)
         except AdminError as exc:

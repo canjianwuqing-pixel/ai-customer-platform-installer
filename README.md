@@ -119,19 +119,25 @@ Chatwoot 接口依据 **v4.18.0** 源码核对：使用 [`api_access_token` 权�
 
 ### 人工接管与失败处理
 
-访客明确说“转人工”等请求，或人工客服公开回复后，Runtime 持久化暂停标志，并使用 Chatwoot 的[机器人转人工状态接口](https://github.com/chatwoot/chatwoot/blob/v4.18.0/app/controllers/api/v1/accounts/conversations_controller.rb)将机器人待处理会话转为 `open`，交由收件箱已有人工/自动分配规则。人工消息、私有备注和 AI 自身消息不会触发 AI 回复。后台可逐实例停用 AI；下一条新消息转人工。暂停不会因新访客消息、容器重启或仅切换会话状态而自动解除。
+访客明确说“转人工”等请求，或人工客服公开回复后，Runtime 持久化暂停标志，并使用 Chatwoot 的[机器人转人工状态接口](https://github.com/chatwoot/chatwoot/blob/v4.18.0/app/controllers/api/v1/accounts/conversations_controller.rb)将机器人待处理会话转为 `open`，交由收件箱已有人工/自动分配规则。人工消息、私有备注和 AI 自身消息不会触发 AI 回复。后台可逐实例停用 AI；下一条新消息转人工。关闭浏览器、暂缓会话、单独切换回 `open` 或等待一段时间，都不会解除人工接管。
 
-管理员在“Chatwoot 接入”的会话列表点击“恢复 AI”，调用实际[分配接口](https://github.com/chatwoot/chatwoot/blob/v4.18.0/app/controllers/api/v1/accounts/conversations/assignments_controller.rb)重新分配机器人并设为 `pending`，仅处理此后新消息，不补发接管期间旧消息。生成后发送前再次检查人工状态；外部系统无法原子锁定人工点击与消息 POST，极短的并发窗口仍须在真实业务验收中观察。
+人工客服在 **Chatwoot 后台将会话标记为已解决**，即结束本轮接管。Runtime 通过原 HMAC 签名 Webhook 保存解决事件和消息分界；访客再次发送消息时，即使复用同一个 `conversation_id`，也仅处理分界后的新消息。Chatwoot 会将已解决会话重新置为 `pending`，但可能保留原人工分配，因此 Runtime 核对实时会话/收件箱及新消息后，调用实际[分配接口](https://github.com/chatwoot/chatwoot/blob/v4.18.0/app/controllers/api/v1/accounts/conversations/assignments_controller.rb)重新分配本实例机器人。无需管理员逐条恢复，不补发人工期间旧消息，历史上下文也从新一轮开始。重启、升级、恢复备份均保留本轮状态及去重记录。
 
-Webhook 接收后立即入持久队列，去重键为实例 + 会话 + 消息 ID；最多 3 次有限退避重试、4 个受限工作任务，同一会话按消息 ID 串行。持久化接收失败返回 500，以匹配 Chatwoot v4.18 Agent Bot 仅重试 429/500、最多 3 次的实际策略。读失败/生成失败不会无限重试，最终暂停并尽力转人工。Chatwoot 消息创建 API 没有幂等保证：发送前记录 `sending`，在消息 `content_attributes` 写入回复标记。若超时/5xx，先查询该标记；无法确认时**不盲目重发**，暂停并显示“发送结果待人工核对”，请在 Chatwoot 核对后恢复 AI。断电后的 `sending` 也只核对，不重发；最迟在 5 分钟租约后接续。恢复旧备份后若记录过旧（24 小时）或首个 100 条后续消息页无法排除已发送回复，也转人工，不冒险重复发送。不声称跨系统绝对 exactly-once。
+此机制依据 v4.18.0 的实际 [AgentBotListener](https://github.com/chatwoot/chatwoot/blob/v4.18.0/app/listeners/agent_bot_listener.rb) 与 [Message 重新打开逻辑](https://github.com/chatwoot/chatwoot/blob/v4.18.0/app/models/message.rb)：**启用中的收件箱机器人**即使已不再分配给人工会话，仍收到 `conversation_resolved` / `conversation_status_changed` / `conversation_updated` 与访客消息。`status_changed` 的变更明细可能为空，`conversation_updated.previous_changes` 对应的状态变更同样被处理，不能假设每个状态事件都含旧值。保留原收件箱机器人绑定、出站 URL 和签名密钥，不需另建账户 Webhook。请勿在 Chatwoot 停用/解绑该机器人；否则无法投递事件，安装器不会以超时猜测恢复。状态事件按源时间去重，重新打开事件可补充解决事件的丢失/乱序；消息比状态事件先被处理时，只重新排队该次新消息，不重发已发送或结果不确定的消息。旧版内部受认证的手动恢复接口为 API 兼容保留，不再提供网页逐会话操作。
+
+生成后、发送前再次检查人工状态、实时分配和本轮版本，并用事务执行最终本地发送校验；人工处理时 AI 保持暂停。Chatwoot 的外部消息 POST 不提供与人工点击共用的事务/条件更新，因而不能承诺跨系统零竞态或绝对 exactly-once；极短的最后请求窗口仍需真实服务器并发验收，不能通过放宽校验解决。
+
+Webhook 接收后立即入持久队列，去重键为实例 + 会话 + 消息 ID；最多 3 次有限退避重试、4 个受限工作任务，同一会话按消息 ID 串行。持久化接收失败返回 500，以匹配 Chatwoot v4.18 Agent Bot 仅重试 429/500、最多 3 次的实际策略。读失败/生成失败不会无限重试，最终暂停并尽力转人工。Chatwoot 消息创建 API 没有幂等保证：发送前记录 `sending`，在消息 `content_attributes` 写入回复标记。若超时/5xx，先查询该标记；无法确认时**不盲目重发**，暂停并显示“发送结果待人工核对”，请在 Chatwoot 核对并解决本轮会话；下次新咨询自动接待。断电后的 `sending` 也只核对，不重发；最迟在 5 分钟租约后接续（这是队列租约，不是人工恢复定时器）。恢复旧备份后若记录过旧（24 小时）或首个 100 条后续消息页无法排除已发送回复，也转人工，不冒险重复发送。
 
 ### 密钥持久化、升级与验收边界
 
 提供商 Key、Chatwoot 管理员 Token、机器人 Token / 签名 Secret 使用 Fernet 加密，存入现有 Runtime `ai_service_data` 卷内 `management/core.sqlite3` 的新增表；随机加密密钥位于同卷 `management/vault.key`（目录 `0700`、文件 `0600`）。普通 GET 配置不含完整凭据；页面仅回显允许的前缀掩码。丢失加密密钥时拒绝自动重建覆盖，必须恢复对应备份。加密保护与配置隔离不等于抵御拥有完整数据卷权限的服务器管理员。
 
-schema 2 → 3 是事务性追加表迁移，不重写原 Service、Domain、知识库或 Chatwoot 业务数据。重复安装不清空数据卷。现有备份/恢复已归档整个 Runtime 数据卷，包含 SQLite、加密密钥、队列、绑定、暂停状态及知识正文；恢复必须保留两者配套，备份本身含解密能力和 `.env`，仍须作为敏感资料保护，不提交 Git。升级请按既有机制给本地 Runtime/Admin 选择**新的固定目标镜像标签**，重建两个组件并应用随附 Nginx 模板，不要仅复用旧镜像标签；原凭据和 Secret 不重置。外部自定义 Runtime 镜像须自行实现这些扩展接口。
+schema 2 → 3 事务性追加表；3 → 4 只为已有会话表追加生命周期顺序、重新打开标志和本轮版本，不重写原 Service、Domain、知识库或 Chatwoot 业务数据。旧暂停不会无依据解除，后续解决/重新打开事件接入新流程。重复安装不清空数据卷。现有备份/恢复已归档整个 Runtime 数据卷，包含 SQLite、加密密钥、队列、绑定、本轮状态及知识正文；恢复必须保留两者配套，备份本身含解密能力和 `.env`，仍须作为敏感资料保护，不提交 Git。升级请按既有机制给本地 Runtime/Admin 选择**新的固定目标镜像标签**，重建两个组件并应用随附 Nginx 模板，不要仅复用旧镜像标签；原凭据和 Secret 不重置。外部自定义 Runtime 镜像须自行实现这些扩展接口。
 
 自动化新增 `tests/openai-chatwoot-fixture-test.sh`：模拟提供商与按 v4.18.0 协议构造的 Chatwoot，覆盖 Key 创建/更换/前缀、动态模型/手动回退、选定模型测试、真实 HTTPS Nginx Webhook、Chromium 桌面/手机后台、多轮隔离、签名/重复投递、有限重试、人工接管/恢复；安装器 fixture 用实际 tar 备份验证知识正文、密钥和绑定在重复安装、升级及恢复后保留。模拟访客消息查询证明回复进入原会话，但**不是运行真实 Chatwoot widget 的联网验收**。
+
+`tests/chatwoot-lifecycle-fixture-test.sh` 覆盖自动结束/恢复、同 ID 复用、状态乱序、人工竞争、旧消息分界及 schema 3 升级。`chatwoot_source_protocol_test.py` 直接执行固定 v4.18.0 Ruby 源码的监听器、HMAC 签名器、事件 presenter、重新打开方法和分配服务，再将生成的真实协议请求送入 Runtime 与 HTTPS Nginx；源码及 MIT 许可保存在 `tests/fixtures/chatwoot-v4.18.0/`，SHA-256 在 `SOURCE.json` 校验。测试需 MRI Ruby + Prism（例如 Ruby 3.3+），可设置 `TEST_RUBY_BINARY`；`REQUIRE_CHATWOOT_SOURCE_TEST=true` 禁止缺工具时跳过。该测试不是完整 Rails/PostgreSQL/Sidekiq 服务验收，源码中的存储和出站传输由隔离适配器代替。
 
 最终需在 Ubuntu 服务器由用户填入真实 Key：确认模型连接成功、Chatwoot 可投递 HTTPS 签名 Webhook、访客窗口实际收到 AI 回复、连续提问隔离、转人工/恢复、真实容器重启及备份恢复。没有真实 Key、Chatwoot 服务或 Ubuntu Docker 主机时，不宣称这些真实端到端验证已通过。
 
@@ -199,7 +205,7 @@ REQUIRE_ADMIN_BROWSER_TEST=true bash tests/admin-browser-fixture-test.sh
 
 配置 API：内部 `/management/profiles/{ai|prompts|knowledge|channels|runtime}` 支持 GET 列表、POST 创建；`/{id}` 支持 GET、PUT。AI 字段沿用 `model`、`api_base_url`、`api_key_env`；提示词沿用 `system_prompt`、`reply_rules`；知识库沿用 `source`、`max_characters`；渠道仅存 `enabled`、`provider`、`config_ref`；Runtime 仅有 `default` 记录的 `default_service_id`。不接收 API Key / 密码 / Token 字段。后台对应接口位于 `/admin/api/{kind}`，修改请求还需 `X-CSRF-Token`。浏览器从页面表单取得 CSRF，不取得内部认证 Token。
 
-profile API 采用与现有配置相同的 SQLite 覆盖方式，不重写 YAML：API profile > 原 profile YAML；Runtime 默认实例为 API default > `AI_DEFAULT_SERVICE_ID` > 唯一启用实例。schema 按版本事务性迁移至 3，原 Service / Domain / profile 数据保留，下一次 Runtime 请求读取新配置。原来的单实例环境变量模式继续有效。
+profile API 采用与现有配置相同的 SQLite 覆盖方式，不重写 YAML：API profile > 原 profile YAML；Runtime 默认实例为 API default > `AI_DEFAULT_SERVICE_ID` > 唯一启用实例。schema 按版本事务性迁移至 4，原 Service / Domain / profile 数据保留，下一次 Runtime 请求读取新配置。原来的单实例环境变量模式继续有效。
 
 ### 后台系统维护
 

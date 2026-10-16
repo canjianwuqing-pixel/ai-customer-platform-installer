@@ -8,6 +8,7 @@ import asyncio
 import hashlib
 import hmac
 import json
+import math
 import re
 import sqlite3
 import time
@@ -257,14 +258,104 @@ class ChatwootBridge:
             db.execute("UPDATE chatwoot_bindings SET enabled=? WHERE service_id=?", (int(enabled), service_id))
         return self.state(service_id)
 
-    def pause(self, service_id, conversation_id, reason="human_takeover"):
+    def pause(self, service_id, conversation_id, reason="human_takeover", *, message_id=None):
         with self.store._connection(write=True) as db:
-            db.execute("INSERT INTO chatwoot_conversations(service_id,conversation_id,paused,reason) VALUES (?,?,1,?) ON CONFLICT(service_id,conversation_id) DO UPDATE SET paused=1,reason=excluded.reason", (service_id, conversation_id, reason))
+            db.execute("INSERT INTO chatwoot_conversations(service_id,conversation_id,paused,reason,generation) VALUES (?,?,1,?,1) ON CONFLICT(service_id,conversation_id) DO UPDATE SET paused=1,awaiting_reopen=0,reason=excluded.reason,generation=generation+1 WHERE ? IS NULL OR resume_after<?", (service_id, conversation_id, reason, message_id, message_id))
 
     def conversation_state(self, service_id, conversation_id):
         with self.store._connection() as db:
             row = db.execute("SELECT paused,resume_after FROM chatwoot_conversations WHERE service_id=? AND conversation_id=?", (service_id, conversation_id)).fetchone()
         return (bool(row[0]), row[1]) if row else (False, 0)
+
+    def round_state(self, service_id, conversation_id):
+        defaults = {"paused": 0, "resume_after": 0, "awaiting_reopen": 0, "generation": 0, "lifecycle_at": 0}
+        with self.store._connection() as db:
+            if not self._ready(db):
+                return defaults
+            db.row_factory = sqlite3.Row
+            row = db.execute("SELECT * FROM chatwoot_conversations WHERE service_id=? AND conversation_id=?", (service_id, conversation_id)).fetchone()
+        return {**defaults, **dict(row)} if row else defaults
+
+    def lifecycle(self, service_id, conversation):
+        """Use signed, source-ordered round boundaries, never a recovery timeout.
+
+        4.18's active inbox bot receives these even when a User owns the
+        conversation. Its messages array contains the last public chat message.
+        Reopening dispatches status_changed BEFORE message_created, with that
+        new incoming message already committed. It must not become the fence.
+        """
+        cid = identifier(conversation["id"])
+        at = conversation.get("updated_at")
+        status = conversation.get("status")
+        if (type(at) not in {float, int} or not math.isfinite(at) or at <= 0
+                or status not in {"open", "pending", "resolved", "snoozed"}):
+            raise ValueError
+        changes = conversation.get("changed_attributes") or []
+        if not isinstance(changes, list) or not all(isinstance(item, dict) for item in changes):
+            raise ValueError
+        reopened = any(item.get("status", {}).get("previous_value") == "resolved"
+                       and item.get("status", {}).get("current_value") == "pending" for item in changes)
+        if status == "pending" and not reopened:
+            return {"status": "ignored"}
+        messages = conversation.get("messages", [])
+        if not isinstance(messages, list):
+            raise ValueError
+        cursor = max((identifier(row["id"]) for row in messages), default=0)
+        if reopened:
+            # A pending transition alone does not authorize an old message.
+            # Only the incoming message which reopened a resolved round is new.
+            incoming = [identifier(row["id"]) for row in messages if is_incoming(row)]
+            if not incoming:
+                return {"status": "ignored"}
+            cursor = min(incoming) - 1
+        with self.store._connection(write=True) as db:
+            db.execute("INSERT OR IGNORE INTO chatwoot_conversations(service_id,conversation_id) VALUES (?,?)", (service_id, cid))
+            previous = db.execute("SELECT lifecycle_at,resume_after FROM chatwoot_conversations WHERE service_id=? AND conversation_id=?", (service_id, cid)).fetchone()
+            if at <= previous[0]:
+                return {"status": "ignored"}
+            fence = max(previous[1], cursor)
+            db.execute("UPDATE chatwoot_conversations SET paused=1,awaiting_reopen=?,resume_after=?,lifecycle_at=?,reason=?,generation=generation+1 WHERE service_id=? AND conversation_id=?",
+                       (int(status == "resolved" or reopened), fence, at,
+                        "conversation_resolved" if status == "resolved" or reopened else "human_takeover", service_id, cid))
+            db.execute("UPDATE chatwoot_events SET status='ignored',reply=NULL WHERE service_id=? AND conversation_id=? AND message_id<=? AND status='waiting'", (service_id, cid, fence))
+            if reopened and min(incoming) > fence:
+                # Sidekiq jobs can be delivered out of order. A message worker
+                # may already have deferred this new message while still
+                # waiting for its status event. Requeue only that verified
+                # reopening message, never sent/uncertain/failed/old work.
+                mid = min(incoming)
+                db.execute("INSERT OR IGNORE INTO chatwoot_events(service_id,conversation_id,message_id,created_at) VALUES (?,?,?,?)", (service_id, cid, mid, time.time()))
+                db.execute("UPDATE chatwoot_events SET status='waiting',next_at=0 WHERE service_id=? AND conversation_id=? AND message_id=? AND status='handoff' AND attempts<?", (service_id, cid, mid, MAX_ATTEMPTS))
+        return {"status": "recorded"}
+
+    async def recover_round(self, client, event, conversation):
+        """Reassign only a verified NEW incoming message after a resolved round.
+
+        AssignmentService in 4.18 atomically clears the old human assignee and
+        sets pending. Merely reopening the browser/open/snoozed is insufficient.
+        """
+        sid, cid, mid = event["service_id"], event["conversation_id"], event["message_id"]
+        state = self.round_state(sid, cid)
+        if not state["awaiting_reopen"] or mid <= state["resume_after"] or not client.binding["enabled"]:
+            return conversation
+        if conversation.get("status") != "pending":
+            return conversation
+        # Never override an explicitly assigned different bot.
+        meta = conversation.get("meta") or {}
+        if meta.get("assignee_type") == "AgentBot" and (meta.get("assignee") or {}).get("id") != client.binding["bot_id"]:
+            return conversation
+        self.resolver.credential(self.resolver.resolve(sid))
+        if not self.bot_owns(conversation, client.binding):
+            await client.call("POST", f"/conversations/{cid}/assignments",
+                              {"assignee_id": client.binding["bot_id"], "assignee_type": "AgentBot"})
+        conversation = await client.conversation(cid)
+        if not self.bot_owns(conversation, client.binding):
+            return conversation
+        with self.store._connection(write=True) as db:
+            # If a human/close webhook arrived during the API calls, it wins.
+            db.execute("UPDATE chatwoot_conversations SET paused=0,awaiting_reopen=0,reason='',generation=generation+1,lifecycle_at=MAX(lifecycle_at,?) WHERE service_id=? AND conversation_id=? AND generation=? AND awaiting_reopen=1",
+                       (conversation.get("updated_at", state["lifecycle_at"]), sid, cid, state["generation"]))
+        return conversation
 
     async def resume(self, service_id, conversation_id):
         binding = self.binding(service_id)
@@ -278,7 +369,7 @@ class ChatwootBridge:
         await client.call("POST", f"/conversations/{conversation_id}/assignments", {"assignee_id": binding["bot_id"], "assignee_type": "AgentBot"})
         await client.call("POST", f"/conversations/{conversation_id}/toggle_status", {"status": "pending"})
         with self.store._connection(write=True) as db:
-            db.execute("INSERT INTO chatwoot_conversations(service_id,conversation_id,paused,resume_after,reason) VALUES (?,?,0,?,'') ON CONFLICT(service_id,conversation_id) DO UPDATE SET paused=0,resume_after=excluded.resume_after,reason=''", (service_id, conversation_id, cursor))
+            db.execute("INSERT INTO chatwoot_conversations(service_id,conversation_id,paused,resume_after,reason) VALUES (?,?,0,?,'') ON CONFLICT(service_id,conversation_id) DO UPDATE SET paused=0,awaiting_reopen=0,resume_after=MAX(resume_after,excluded.resume_after),reason='',generation=generation+1", (service_id, conversation_id, cursor))
             db.execute("UPDATE chatwoot_events SET status='ignored',reply=NULL WHERE service_id=? AND conversation_id=? AND message_id<=? AND status='waiting'", (service_id, conversation_id, cursor))
         return {"status": "resumed"}
 
@@ -295,6 +386,14 @@ class ChatwootBridge:
             event = json.loads(raw)
             if not isinstance(event, dict):
                 raise ValueError
+            if event.get("event") in {"conversation_resolved", "conversation_opened", "conversation_status_changed", "conversation_updated"}:
+                if event["account"]["id"] != binding["account_id"] or event["inbox_id"] != binding["inbox_id"]:
+                    raise ValueError
+                if event["event"] == "conversation_updated" and not any(
+                        set(item) & {"status", "assignee_id", "assignee_agent_bot_id", "ai_assignee_type"}
+                        for item in (event.get("changed_attributes") or [])):
+                    return {"status": "ignored"}
+                return self.lifecycle(service_id, event)
             if event.get("event") != "message_created":
                 return {"status": "ignored"}
             conversation = event["conversation"]
@@ -304,7 +403,7 @@ class ChatwootBridge:
             if is_human(event):
                 if message_id <= self.conversation_state(service_id, conversation_id)[1]:
                     return {"status": "ignored"}
-                self.pause(service_id, conversation_id)
+                self.pause(service_id, conversation_id, message_id=message_id)
                 return {"status": "human_takeover"}
             if not is_incoming(event, webhook=True):
                 return {"status": "ignored"}
@@ -348,6 +447,16 @@ class ChatwootBridge:
                  event["service_id"], event["conversation_id"], event["message_id"]))
             db.execute("UPDATE chatwoot_bindings SET last_error=? WHERE service_id=?", (error, event["service_id"]))
 
+    def prepare_send(self, event, generation, reply):
+        # Final local fence is transactional: a lifecycle/human webhook which
+        # committed while the last API GET was in flight must still win.
+        with self.store._connection(write=True) as db:
+            state = db.execute("SELECT c.paused,c.generation,c.resume_after,b.enabled FROM chatwoot_conversations c JOIN chatwoot_bindings b USING(service_id) WHERE c.service_id=? AND c.conversation_id=?", (event["service_id"], event["conversation_id"])).fetchone()
+            if not state or state[0] or state[1] != generation or event["message_id"] <= state[2] or not state[3]:
+                return False
+            db.execute("UPDATE chatwoot_events SET status='sending',reply=?,lease_until=? WHERE service_id=? AND conversation_id=? AND message_id=?", (self.vault.seal(db, reply), time.time() + 300, event["service_id"], event["conversation_id"], event["message_id"]))
+        return True
+
     @staticmethod
     def bot_owns(conversation, binding):
         meta = conversation.get("meta") or {}
@@ -356,9 +465,16 @@ class ChatwootBridge:
                 and assignee.get("id") == binding["bot_id"])
 
     async def handoff(self, client, event, reason):
-        self.pause(event["service_id"], event["conversation_id"], reason)
+        state = self.round_state(event["service_id"], event["conversation_id"])
+        if event["message_id"] <= state["resume_after"]:
+            return
+        self.pause(event["service_id"], event["conversation_id"], reason, message_id=event["message_id"])
         conversation = await client.conversation(event["conversation_id"])
-        if self.bot_owns(conversation, client.binding):
+        meta = conversation.get("meta") or {}
+        reopened_for_human = (state["awaiting_reopen"] and conversation.get("status") == "pending"
+                              and meta.get("assignee_type") in {None, "User"})
+        if (event["message_id"] > self.conversation_state(event["service_id"], event["conversation_id"])[1]
+                and (self.bot_owns(conversation, client.binding) or reopened_for_human)):
             await client.call("POST", f"/conversations/{event['conversation_id']}/toggle_status", {"status": "open"}, bot=True)
 
     async def process(self, event):
@@ -392,12 +508,20 @@ class ChatwootBridge:
             if current is None or not is_incoming(current):
                 self.finish(event, "ignored")
                 return
-            paused, resume_after = self.conversation_state(sid, cid)
+            if mid <= self.conversation_state(sid, cid)[1]:
+                self.finish(event, "ignored")
+                return
+            conversation = await self.recover_round(client, event, conversation)
+            state = self.round_state(sid, cid)
+            paused, resume_after = bool(state["paused"]), state["resume_after"]
             if mid <= resume_after:
                 self.finish(event, "ignored")
                 return
             if not binding["enabled"] or paused or not self.bot_owns(conversation, binding):
-                await self.handoff(client, event, "human_takeover")
+                # A resolved round must stay armed until the next NEW message;
+                # a delayed old event must not clear its recovery boundary.
+                if not state["awaiting_reopen"] or conversation.get("status") != "resolved" or not binding["enabled"]:
+                    await self.handoff(client, event, "human_takeover")
                 self.finish(event, "handoff")
                 return
             if time.time() - event["created_at"] > 86400:
@@ -420,6 +544,8 @@ class ChatwootBridge:
             config = self.resolver.resolve(sid)
             protected.append(self.resolver.credential(config))
             for row in reversed(before[-MAX_HISTORY:]):
+                if row.get("id", 0) <= resume_after:
+                    continue
                 sender = row.get("sender", {})
                 allowed_bot = row.get("message_type") in {1, "outgoing"} and sender.get("type") == "agent_bot" and sender.get("id") == binding["bot_id"]
                 if not (is_incoming(row) or allowed_bot) or row.get("private") is not False:
@@ -439,14 +565,18 @@ class ChatwootBridge:
             for secret in protected:
                 reply = reply.replace(secret, "[已隐藏凭据]")
             newest = await client.messages(cid)
-            if (self.conversation_state(sid, cid)[0] or not self.binding(sid)["enabled"]
+            current_state = self.round_state(sid, cid)
+            if (current_state["generation"] != state["generation"] or current_state["paused"] or not self.binding(sid)["enabled"]
                     or any(is_human(row) and row["id"] > resume_after for row in newest)
                     or not self.bot_owns(await client.conversation(cid), binding)):
-                await self.handoff(client, event, "human_takeover")
+                if current_state["generation"] == state["generation"]:
+                    await self.handoff(client, event, "human_takeover")
                 self.finish(event, "handoff")
                 return
             # Persist 'sending' before any non-idempotent external POST.
-            self.finish(event, "sending", reply=reply)
+            if not self.prepare_send(event, state["generation"], reply):
+                self.finish(event, "handoff")
+                return
             try:
                 await client.call("POST", f"/conversations/{cid}/messages", {"content": reply, "message_type": "outgoing", "private": False,
                     "content_type": "text", "content_attributes": {"platform_ai_reply_id": marker, "in_reply_to": mid}}, bot=True)
@@ -473,12 +603,12 @@ class ChatwootBridge:
             if sending:
                 self.finish(event, "sending", "chatwoot_delivery_uncertain")
                 if event["attempts"] >= MAX_ATTEMPTS:
-                    self.pause(sid, cid, "delivery_uncertain")
+                    self.pause(sid, cid, "delivery_uncertain", message_id=mid)
                     self.finish(event, "uncertain", "chatwoot_delivery_uncertain")
             elif event["attempts"] < MAX_ATTEMPTS:
                 self.finish(event, "waiting", error.code)
             else:
-                self.pause(sid, cid, "ai_reply_failed")
+                self.pause(sid, cid, "ai_reply_failed", message_id=mid)
                 try:
                     await self.handoff(client, event, "ai_reply_failed")
                 except RuntimeFailure:
@@ -490,7 +620,7 @@ class ChatwootBridge:
         if event:
             try:
                 if event["attempts"] > MAX_ATTEMPTS and event["status"] != "sending":
-                    self.pause(event["service_id"], event["conversation_id"], "ai_reply_failed")
+                    self.pause(event["service_id"], event["conversation_id"], "ai_reply_failed", message_id=event["message_id"])
                     self.finish(event, "failed", "chatwoot_invalid_response")
                     return True
                 async with asyncio.timeout(120):
@@ -499,10 +629,10 @@ class ChatwootBridge:
                 with self.store._connection() as db:
                     status = db.execute("SELECT status FROM chatwoot_events WHERE service_id=? AND conversation_id=? AND message_id=?", (event["service_id"], event["conversation_id"], event["message_id"])).fetchone()[0]
                 if status == "sending":
-                    self.pause(event["service_id"], event["conversation_id"], "delivery_uncertain")
+                    self.pause(event["service_id"], event["conversation_id"], "delivery_uncertain", message_id=event["message_id"])
                     self.finish(event, "uncertain", "chatwoot_delivery_uncertain")
                 elif event["attempts"] >= MAX_ATTEMPTS:
-                    self.pause(event["service_id"], event["conversation_id"], "ai_reply_failed")
+                    self.pause(event["service_id"], event["conversation_id"], "ai_reply_failed", message_id=event["message_id"])
                     self.finish(event, "failed", "chatwoot_invalid_response")
                 else:
                     self.finish(event, "waiting", "chatwoot_invalid_response")

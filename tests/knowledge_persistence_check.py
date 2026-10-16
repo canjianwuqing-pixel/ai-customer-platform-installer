@@ -12,6 +12,7 @@ from ai_runtime.app import create_app
 from ai_runtime.config import ServiceResolver
 from ai_runtime.engine import RuntimeEngine, build_messages
 from ai_runtime.vault import CredentialVault
+import time
 from openai_chatwoot_test import ChatwootProtocol
 
 
@@ -40,6 +41,12 @@ with TestClient(application, headers={"authorization": "Bearer " + env["SERVICE_
         for service_id, inbox in (("service_a", 7), ("service_b", 8)):
             assert api.put("/management/chatwoot/" + service_id + "/connection", json={"base_url": "https://chatwoot.example.test", "account_id": 42, "api_token": protocol.token}).status_code == 200
             assert api.post("/management/chatwoot/" + service_id + "/bind", json={"inbox_id": inbox, "public_url": "https://platform.example.test"}).status_code == 200
+        bridge = application.state.chatwoot
+        bridge.pause("service_a", 100, "visitor_requested_human")
+        bridge.lifecycle("service_a", {"id": 100, "status": "resolved", "updated_at": time.time(), "messages": [{"id": 20}]})
+        bridge.pause("service_b", 200)
+        with bridge.store._connection(write=True) as db:
+            db.execute("INSERT INTO chatwoot_events(service_id,conversation_id,message_id,status,created_at) VALUES ('service_a',100,19,'sent',?)", (time.time(),))
     elif mode == "mutate":
         for key in expected:
             base = "/management/services/" + key + "/knowledge"
@@ -48,6 +55,7 @@ with TestClient(application, headers={"authorization": "Bearer " + env["SERVICE_
         assert api.post("/management/models/save", json={"id": "model", "profile": {"model": "fixture-model"}, "api_key": provider_key + "changed"}).status_code == 200
         for service_id in expected:
             assert api.put("/management/chatwoot/" + service_id + "/enabled", json={"enabled": False}).status_code == 200
+        application.state.chatwoot.pause("service_a", 100)
     elif mode == "verify":
         for key, content in expected.items():
             result = api.get("/management/services/" + key + "/knowledge")
@@ -64,6 +72,13 @@ with TestClient(application, headers={"authorization": "Bearer " + env["SERVICE_
             assert state["enabled"] and state["inbox_id"] == inbox
             saved = vault.get("chatwoot", service_id)
             assert saved["api_token"] == protocol.token and saved["webhook_secret"] and saved["bot_token"]
+        bridge = application.state.chatwoot
+        closed = bridge.round_state("service_a", 100)
+        handling = bridge.round_state("service_b", 200)
+        assert closed["paused"] and closed["awaiting_reopen"] and closed["resume_after"] == 20
+        assert handling["paused"] and not handling["awaiting_reopen"]
+        with bridge.store._connection() as db:
+            assert db.execute("SELECT status FROM chatwoot_events WHERE service_id='service_a' AND conversation_id=100 AND message_id=19").fetchone()[0] == 'sent'
     else:
         raise AssertionError("unknown fixture mode")
-print("Knowledge, encrypted model key and Chatwoot binding persistence " + mode + " passed.")
+print("Knowledge, encrypted keys, Chatwoot bindings, lifecycle fences and dedup persistence " + mode + " passed.")

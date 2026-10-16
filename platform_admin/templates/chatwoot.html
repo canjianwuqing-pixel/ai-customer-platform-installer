@@ -17,8 +17,7 @@
 {% if state.bot_id %}<p class="notice {{ 'success' if state.enabled else '' }}">当前实例 AI：{{ '已启用' if state.enabled else '已停用（新消息转人工）' }} · 收件箱 ID：{{ state.inbox_id }}</p>
 <form method="post"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="service_id" value="{{ selected }}"><input type="hidden" name="action" value="toggle"><input type="hidden" name="enabled" value="{{ 'false' if state.enabled else 'true' }}"><button class="secondary">{{ '停用 AI' if state.enabled else '启用 AI' }}</button></form>
 {% if state.last_error %}<p class="notice error">最近处理错误：{{ error_message(state.last_error) }}</p>{% endif %}
-<h2>会话人工接管状态</h2><p class="hint">访客明确要求人工或人工公开回复后，AI 会暂停；在 Chatwoot 处理后，点击“恢复 AI”，仅对之后的新访客消息启用。恢复会将会话重新分配给机器人并设为待处理，不补发旧消息。</p>
-<div class="table-wrap"><table><thead><tr><th>会话 ID</th><th>状态</th><th>操作</th></tr></thead><tbody>{% for conversation in state.conversations %}<tr><td>{{ conversation.id }}</td><td>{{ error_message(conversation.reason) if conversation.paused else 'AI 可处理新消息' }}</td><td>{% if conversation.paused and state.enabled %}<form method="post"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="service_id" value="{{ selected }}"><input type="hidden" name="action" value="resume"><input type="hidden" name="conversation_id" value="{{ conversation.id }}"><button class="secondary small">恢复 AI</button></form>{% endif %}</td></tr>{% else %}<tr><td colspan="3">暂无已接入会话。</td></tr>{% endfor %}</tbody></table></div>
-{% for item in state.errors %}<p class="notice error">会话 {{ item.conversation_id }} · 消息 {{ item.message_id }}：{{ error_message(item.error) }}</p>{% endfor %}
+<p class="hint">访客聊天、人工接管和解决会话均在 Chatwoot 后台操作。人工处理期间 AI 保持暂停；人工将会话标记为已解决后，访客再次发送新消息将自动恢复 AI 接待，不补发旧消息。关闭浏览器或暂缓会话不会恢复 AI。请保持 Chatwoot 收件箱机器人启用，以接收签名状态事件。</p>
+{% for item in state.errors %}<p class="notice error">接入处理错误：{{ error_message(item.error) }}</p>{% endfor %}
 {% endif %}{% endif %}
 {% endblock %}

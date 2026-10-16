@@ -1,0 +1,16 @@
+{
+  "repository": "https://github.com/chatwoot/chatwoot",
+  "tag": "v4.18.0",
+  "source_url": "https://raw.githubusercontent.com/chatwoot/chatwoot/v4.18.0/",
+  "description": "Unmodified upstream source snapshots; underscores in local filenames replace slashes. See LICENSE. Rails database and outbound transport are substituted only in the test harness.",
+  "sha256": {
+    "app_models_conversation.rb": "765e6d4b4a6b9f5bdebbd8ad45ee86afd45a43a43c0f10493aa9cebb8b6c6889",
+    "app_services_conversations_assignment_service.rb": "589ec776f26297022a9a0023f2f0bbdd0a7c1fdcf85ec8743a888f34989175ac",
+    "app_presenters_conversations_event_data_presenter.rb": "3e985c30c4ec6741f9dd97e19e360205f4a027ab65c88935f26d43e7d65926d2",
+    "LICENSE": "602d38a808315f221a5e72e2e90e40cb9300f09aa4b317a6a8f1a0c7a3d2175d",
+    "app_listeners_base_listener.rb": "50db9ab0c06244e023d58b4b7dd01d9b9e2c4fa37745f535500ffa6af162bc76",
+    "lib_webhooks_trigger.rb": "959ed3af1dfad92fc7540e16c45c2cf6811aeeac702f22ec17715d65a071a42f",
+    "app_listeners_agent_bot_listener.rb": "cf733d9ade2e9ff4564e7f41deeeaede8e3a2a95edf7d4a5dbe0a6b4653088a3",
+    "app_models_message.rb": "b31b98c28bbe2fe6bed2b78d6cc2553830a9217236c179c78791e8b6c9cb7701"
+  }
+}

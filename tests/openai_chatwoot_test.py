@@ -22,7 +22,7 @@ from admin_forms_test import Editor
 from ai_runtime.app import create_app
 from ai_runtime.config import ServiceResolver, RuntimeFailure
 from ai_runtime.engine import ChatProvider, RuntimeEngine
-from ai_runtime.management_store import ManagementStore, MIGRATIONS
+from ai_runtime.management_store import ManagementStore, MIGRATIONS, SCHEMA_VERSION
 from ai_runtime.vault import CredentialVault
 from platform_admin.app import create_app as admin_app
 from platform_admin.clients import InternalClient
@@ -459,7 +459,7 @@ class IntegrationFixtures(unittest.TestCase):
         self.model()
         self.assertEqual(self.api.get("/management/profiles/ai/legacy").json()["model"], "legacy-arbitrary-id")
         with closing(sqlite3.connect(path)) as db:
-            self.assertEqual(db.execute("PRAGMA user_version").fetchone()[0], 3)
+            self.assertEqual(db.execute("PRAGMA user_version").fetchone()[0], SCHEMA_VERSION)
 
     def test_atomic_credential_update_missing_vault_key_and_restored_volume(self):
         self.prepared()

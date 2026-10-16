@@ -12,7 +12,7 @@ import stat
 from .config import RuntimeFailure, _boolean, _load_yaml, _text, validate_services
 
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 MIGRATIONS = {
     1: (
         """CREATE TABLE management_records (
@@ -41,6 +41,11 @@ MIGRATIONS = {
             reply BLOB, error TEXT NOT NULL DEFAULT '', created_at REAL NOT NULL,
             PRIMARY KEY(service_id,conversation_id,message_id))""",
         "CREATE INDEX chatwoot_event_queue ON chatwoot_events(status,next_at)",
+    ),
+    4: (
+        "ALTER TABLE chatwoot_conversations ADD COLUMN lifecycle_at REAL NOT NULL DEFAULT 0",
+        "ALTER TABLE chatwoot_conversations ADD COLUMN awaiting_reopen INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE chatwoot_conversations ADD COLUMN generation INTEGER NOT NULL DEFAULT 0",
     ),
 }
 DOMAIN_FIELDS = {"domain", "service_id", "enabled", "default_entry"}
