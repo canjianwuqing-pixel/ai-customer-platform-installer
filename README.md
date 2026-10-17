@@ -114,7 +114,13 @@ TEST_JOBS=4 bash tests/run-all.sh
 2. 保存后仅显示 Key 前 8 位与星号。编辑时 Key 留空保留，输入新 Key 即替换；不要求每次编辑重新填写。未后台保存 Key 时兼容 `api_key_env` 指向的已有环境变量。每个实例通过原 `ai_config` 关联自己的模型配置；保存修改后下一条消息即生效，不需重建容器。
 3. 在“客服实例”关联原有提示词、回复规则和知识库并启用实例。在“Chatwoot 接入”选择实例，输入 Chatwoot 网站地址、账户 ID、该账户**管理员**的 API Access Token；真实查询已有网站收件箱，再选择绑定。不使用 widget Token，不将 Agent Bot Token 误作可读取消息历史的用户 Token。
 4. 后端创建账户级 Agent Bot，将其绑定到所选网站收件箱，并自动设置当前 HTTPS 入口下的 Webhook。Chatwoot 必须能访问此 HTTPS 地址。一个实例绑定一个网站收件箱，同一收件箱不能被两个实例复用；已有其他机器人时拒绝覆盖。V1 已绑定网站/账户/收件箱保持稳定，允许更换同一连接的管理员 Token；其他入口使用独立实例，不进行隐式搬迁。
-5. 新访客会话由 Chatwoot 置为 `pending` 并分配机器人。Runtime 只处理经过签名认证、绑定校验的访客公开文本新消息，再从账户 API 读取实际消息，按 `service_id` 加载模型、提示词和实例独立知识正文，将公开回复通过机器人消息 API 发回原会话。现有已开放的人工会话不会被安装器强制抢回。
+5. 新访客会话由 Chatwoot 置为 `pending` 并分配机器人。Runtime 只处理经过签名认证、绑定校验的访客公开新消息，再从账户 API 读取实际文字及图片附件，按 `service_id` 加载模型、提示词和实例独立知识正文，将公开回复通过机器人消息 API 发回原会话。现有已开放的人工会话不会被安装器强制抢回。
+
+#### 网站客服图片识别
+
+在“AI 模型配置”确认提供方支持当前模型的 Chat Completions 图片输入后，开启“此模型支持图片识别”并保存。支持纯图片、图片加文字、PNG / JPEG / WebP，每条最多 3 张；各实例继续使用自己关联的模型、提示词及知识库。旧模型配置默认关闭识图，文字功能不变，不按模型名称设白名单或猜测能力。开启后的“测试模型连接”会用当前选择的模型发送一张内置小图，访客图片识别同样可能产生提供方计费。
+
+附件只从经过验证的 Chatwoot 会话消息 API 获取，仅在本次需要时下载、校验、内存转换，不新增图片存储，不改动 Chatwoot 原图片及已有 3 天清理计划。识图不支持、超限、下载失败或模型拒绝时明确反馈，绝不声称看过未读取的图片。历史图片不会重复下载，原文字上下文和知识库限制保留。详见[图片识别、安全边界及安全更新步骤](docs/image-recognition.md)。
 
 模型查询使用 [OpenAI Models API](https://developers.openai.com/api/reference/resources/models/methods/list)，生成与测试沿用 [Chat Completions 协议](https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create)。兼容提供同等协议的服务；不假设仅支持 Responses 等其他协议的接口可以直接工作。普通 profile API 的 `model` / `api_base_url` / `api_key_env` 字段契约不变。新内部接口（全部使用现有 `SERVICE_MANAGEMENT_TOKEN`）为 `/management/models/save`（配置及可选只写 Key 同事务保存）、`/discover`、`/test` 和 `/{profile_id}/credential`（仅掩码元数据）；浏览器仅访问受 Session、Origin、CSRF 保护的 `/admin/models/*` 与原配置表单。
 
@@ -208,7 +214,7 @@ REQUIRE_ADMIN_BROWSER_TEST=true bash tests/admin-browser-fixture-test.sh
 
 浏览器点击真实表单，测试不手工提供 Origin/Referer，也不关闭 Web 安全、SameSite 或 CSRF。使用临时域名解析规则及仅匹配测试证书公钥的进程级 TLS 例外，不安装系统证书、不修改 hosts、现有 Nginx 或用户浏览器 profile；不记录 HAR、trace、密码、Cookie 或 Token。覆盖 HTTPS 登录/退出、强制 no-referrer 后的 null Origin 拒绝、带有效 CSRF/Session 的跨来源表单拒绝、真正跨站的 Strict Cookie 防护、CSRF/Session 校验和跨来源 Referer 隐私。缺少依赖时可跳过；CI 设置 `REQUIRE_ADMIN_BROWSER_TEST=true` 后缺少工具或浏览器即失败。本次策略修复仅需部署更新后的 Admin 应用，并重新打开登录页，不要求修改服务器配置或已有凭据。
 
-配置 API：内部 `/management/profiles/{ai|prompts|knowledge|channels|runtime}` 支持 GET 列表、POST 创建；`/{id}` 支持 GET、PUT。AI 字段沿用 `model`、`api_base_url`、`api_key_env`；提示词沿用 `system_prompt`、`reply_rules`；知识库沿用 `source`、`max_characters`；渠道仅存 `enabled`、`provider`、`config_ref`；Runtime 仅有 `default` 记录的 `default_service_id`。不接收 API Key / 密码 / Token 字段。后台对应接口位于 `/admin/api/{kind}`，修改请求还需 `X-CSRF-Token`。浏览器从页面表单取得 CSRF，不取得内部认证 Token。
+配置 API：内部 `/management/profiles/{ai|prompts|knowledge|channels|runtime}` 支持 GET 列表、POST 创建；`/{id}` 支持 GET、PUT。AI 字段沿用 `model`、`api_base_url`、`api_key_env`，增加可选布尔值 `supports_vision`（默认 false）；提示词沿用 `system_prompt`、`reply_rules`；知识库沿用 `source`、`max_characters`；渠道仅存 `enabled`、`provider`、`config_ref`；Runtime 仅有 `default` 记录的 `default_service_id`。不接收 API Key / 密码 / Token 字段。后台对应接口位于 `/admin/api/{kind}`，修改请求还需 `X-CSRF-Token`。浏览器从页面表单取得 CSRF，不取得内部认证 Token。
 
 profile API 采用与现有配置相同的 SQLite 覆盖方式，不重写 YAML：API profile > 原 profile YAML；Runtime 默认实例为 API default > `AI_DEFAULT_SERVICE_ID` > 唯一启用实例。schema 按版本事务性迁移至 4，原 Service / Domain / profile 数据保留，下一次 Runtime 请求读取新配置。原来的单实例环境变量模式继续有效。
 

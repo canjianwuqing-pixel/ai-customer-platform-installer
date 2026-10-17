@@ -16,6 +16,7 @@ class ModelProfile(Profile):
     model: str = Field(min_length=1, max_length=256)
     api_base_url: str = Field(default="", max_length=2048)
     api_key_env: str = Field(default="OPENAI_API_KEY", pattern=r"^[A-Z_][A-Z0-9_]*$")
+    supports_vision: bool = False
 
 
 class PromptProfile(Profile):

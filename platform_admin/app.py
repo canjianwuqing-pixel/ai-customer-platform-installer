@@ -501,7 +501,7 @@ def create_app(env=None, management=None, maintenance=None, *, widget_transport=
         try:
             if kind == "ai" and api_key:
                 await integration_call("POST", "models/save?create=" + ("true" if creating else "false"),
-                    {"id": record.get("id", key) if creating else key, "profile": {name: record.get(name, forms.defaults("ai")[name]) for name in ("model", "api_base_url", "api_key_env")}, "api_key": api_key})
+                    {"id": record.get("id", key) if creating else key, "profile": {name: record.get(name, forms.defaults("ai")[name]) for name in ("model", "api_base_url", "api_key_env", "supports_vision")}, "api_key": api_key})
             else:
                 await public_call(kind, "POST" if creating else "PUT", "" if creating else key, record)
         except AdminError as error:

@@ -48,6 +48,8 @@ FIELDS = {
     ),
     "ai": (
         Field("model", "模型名称", required=True, maximum=256, hint="填写模型提供方支持的模型标识，不预设特定模型。"),
+        Field("supports_vision", "此模型支持图片识别", "checkbox", False,
+              hint="仅在提供方确认此模型支持 Chat Completions 图片输入时开启。模型列表不能可靠判断视觉能力；开启后连接测试会发送一张内置小图，可能产生额外费用。访客图片也按提供方规则计费。"),
         Field("api_base_url", "API 基础地址", "url", maximum=2048, hint="可留空以使用服务端默认地址。仅支持 HTTP / HTTPS，不填写账号、密码、查询参数或 Token。"),
         Field("api_key_env", "凭据环境变量名称", default="OPENAI_API_KEY", required=True,
               pattern=r"[A-Z_][A-Z0-9_]*", hint="兼容已有服务端环境变量；未保存独立 Key 时使用此变量。普通用户直接填写下方 API Key 即可。"),
@@ -73,6 +75,8 @@ FIELDS = {
 }
 
 ERRORS = {
+    "vision_not_supported": "当前模型未启用或不支持图片识别，请确认模型能力后开启图片识别，或更换支持视觉的模型。",
+    "vision_request_rejected": "图片请求被模型服务拒绝，可能不支持视觉或图片输入格式；未当作已识别成功，请核对模型能力。",
     "invalid_api_credential": "凭据格式不正确，请填写有效 Key / Token，不能包含空格或控制字符。",
     "credential_storage_unavailable": "凭据存储无法读取，请检查数据卷及备份中的加密密钥文件；不会自动替换旧凭据。",
     "model_list_unavailable": "该接口暂不支持查询模型或请求失败；可继续手动输入模型 ID，不限制模型范围。",

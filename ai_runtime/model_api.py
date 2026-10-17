@@ -31,6 +31,7 @@ class ModelProbe(PrivateInput):
     api_base_url: str = Field(default="", max_length=2048)
     api_key_env: str = "OPENAI_API_KEY"
     api_key: str = Field(default="", max_length=4096, repr=False)
+    supports_vision: bool = False
 
 
 def model_router(resolver, provider=None):
@@ -47,7 +48,7 @@ def model_router(resolver, provider=None):
             reference(body.profile_id)
             store.get_profile("ai", body.profile_id)
         config = resolver._runtime_config("validation", {"model": body.model or "connection-probe",
-            "api_base_url": body.api_base_url, "api_key_env": body.api_key_env}, {}, {})
+            "api_base_url": body.api_base_url, "api_key_env": body.api_key_env, "supports_vision": body.supports_vision}, {}, {})
         config = replace(config, credential_ref=body.profile_id)
         credential = validate_secret(body.api_key) if body.api_key else resolver.credential(config)
         if credential in config.model or credential in config.api_base_url:
@@ -101,7 +102,12 @@ def model_router(resolver, provider=None):
             raise RuntimeFailure("invalid_profile_configuration", 422)
         config, credential = await run_in_threadpool(configuration, body)
         try:
-            reply = await asyncio.wait_for(provider.reply(config, credential, [{"role": "user", "content": "Reply with OK."}]), timeout=20)
+            content = "Reply with OK."
+            if config.supports_vision:
+                from .images import probe_image
+                content = [{"type": "text", "text": "Describe the color in this image briefly."},
+                           {"type": "image_url", "image_url": {"url": probe_image()}}]
+            reply = await asyncio.wait_for(provider.reply(config, credential, [{"role": "user", "content": content}]), timeout=20)
         except TimeoutError:
             raise RuntimeFailure("provider_timeout", 504) from None
         if credential in reply:

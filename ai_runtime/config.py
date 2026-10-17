@@ -126,6 +126,7 @@ class RuntimeConfig:
     knowledge_source: Path | None = field(repr=False)
     knowledge_max_characters: int
     credential_ref: str = field(default="", repr=False)
+    supports_vision: bool = False
 
 
 class ServiceResolver:
@@ -221,7 +222,7 @@ class ServiceResolver:
         """Resolve a validated record, including a not-yet-committed API edit."""
         if not entry["ai_config"]:
             raise RuntimeFailure("ai_configuration_missing")
-        ai = self._profile("ai", entry["ai_config"], {"model", "api_base_url", "api_key_env"}, profiles=profiles)
+        ai = self._profile("ai", entry["ai_config"], {"model", "api_base_url", "api_key_env", "supports_vision"}, profiles=profiles)
         prompt = self._profile("prompts", entry["prompt_config"], {"system_prompt", "reply_rules"}, profiles=profiles)
         knowledge = self._profile("knowledge", entry["knowledge_config"], {"source", "max_characters"}, profiles=profiles)
         return replace(self._runtime_config(entry["id"], ai, prompt, knowledge), credential_ref=entry["ai_config"])
@@ -237,6 +238,9 @@ class ServiceResolver:
         if parsed_url.scheme not in {"https", "http"} or not parsed_url.hostname or parsed_url.username or parsed_url.password or parsed_url.query or parsed_url.fragment:
             raise RuntimeFailure("invalid_provider_url")
         api_key_env = _text(ai.get("api_key_env", "OPENAI_API_KEY"))
+        supports_vision = ai.get("supports_vision", False)
+        if type(supports_vision) is not bool:
+            raise RuntimeFailure("invalid_configuration")
         if not ENV_NAME.fullmatch(api_key_env) or api_key_env in RESERVED_CREDENTIALS:
             raise RuntimeFailure("invalid_configuration")
         system_prompt = _text(
@@ -258,7 +262,7 @@ class ServiceResolver:
             raise RuntimeFailure("invalid_configuration")
         return RuntimeConfig(
             service_id, model, base_url, api_key_env, system_prompt,
-            reply_rules, knowledge_file, limit,
+            reply_rules, knowledge_file, limit, supports_vision=supports_vision,
         )
 
     def credential(self, config: RuntimeConfig) -> str:

@@ -41,7 +41,7 @@ with TestClient(application, headers={"authorization": "Bearer " + env["SERVICE_
             assert api.put(base + "/knowledge", json={"content": content, "revision": revision}).status_code == 200
         assert api.post("/management/services", json={"id": "service_empty", "name": "尚无正文的客服",
             "enabled": True, "ai_config": "model", "knowledge_config": "shared"}).status_code == 201
-        assert api.post("/management/models/save", json={"id": "model", "profile": {"model": "fixture-model"}, "api_key": provider_key}).status_code == 200
+        assert api.post("/management/models/save", json={"id": "model", "profile": {"model": "fixture-model", "supports_vision": True}, "api_key": provider_key}).status_code == 200
         for service_id, inbox in (("service_a", 7), ("service_b", 8)):
             assert api.put("/management/chatwoot/" + service_id + "/connection", json={"base_url": "https://chatwoot.example.test", "account_id": 42, "api_token": protocol.token}).status_code == 200
             assert api.post("/management/chatwoot/" + service_id + "/bind", json={"inbox_id": inbox, "public_url": "https://platform.example.test"}).status_code == 200
@@ -89,6 +89,7 @@ with TestClient(application, headers={"authorization": "Bearer " + env["SERVICE_
             messages = build_messages(resolver.resolve(key), "fixture message")
             assert messages[0]["content"] == "<knowledge_context>\n" + content + "\n</knowledge_context>"
             assert resolver.credential(resolver.resolve(key)) == provider_key
+            assert resolver.resolve(key).supports_vision
             assert api.get("/management/services/" + key).json()["enabled"]
         empty = api.get("/management/services/service_empty/knowledge").json()
         assert not empty["exists"] and empty["content"] == ""

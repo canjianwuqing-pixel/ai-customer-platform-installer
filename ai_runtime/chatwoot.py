@@ -55,6 +55,10 @@ def origin_identity(value):
 
 def is_incoming(message, *, webhook=False):
     sender = message.get("sender") or {}
+    content = message.get("content")
+    valid_content = content is None or isinstance(content, str)
+    has_text = isinstance(content, str) and bool(content.strip())
+    has_attachments = isinstance(message.get("attachments"), list) and bool(message["attachments"])
     contact = ((message.get("conversation") or {}).get("meta") or {}).get("sender") or {}
     # Contact.webhook_data in 4.18 has no `type`, unlike message list API.
     # Verify it against the conversation's typed contact before queuing IDs.
@@ -66,7 +70,7 @@ def is_incoming(message, *, webhook=False):
             and message.get("content_type", "text") in {0, "text"}
             and not message.get("content_attributes", {}).get("deleted")
             and contact_sender
-            and isinstance(message.get("content"), str) and bool(message["content"].strip()))
+            and valid_content and (has_text or has_attachments))
 
 
 def is_human(message):
@@ -82,8 +86,10 @@ def wants_human(text):
 
 
 class ChatwootClient:
-    def __init__(self, binding, credentials, transport=None):
+    def __init__(self, binding, credentials, transport=None, *, attachment_origins=None, attachment_private=False):
         self.binding, self.credentials, self.transport = binding, credentials, transport
+        self.attachment_origins = attachment_origins or {origin_identity(binding["base_url"])}
+        self.attachment_private = attachment_private
 
     async def call(self, method, suffix, data=None, *, bot=False, params=None):
         token = self.credentials["bot_token" if bot else "api_token"]
@@ -176,9 +182,13 @@ class ChatwootBridge:
         credentials = self.vault.get("chatwoot", binding["service_id"])
         if not isinstance(credentials, dict):
             raise RuntimeFailure("chatwoot_not_configured", 409)
-        if self.is_local_origin(binding["base_url"]) and self.resolver.env.get("CHATWOOT_INTERNAL_URL"):
+        origins = {origin_identity(binding["base_url"])}
+        internal = self.is_local_origin(binding["base_url"]) and bool(self.resolver.env.get("CHATWOOT_INTERNAL_URL"))
+        if internal:
+            origins.update(origin_identity(value) for value in self.local_origins())
             binding = {**binding, "base_url": server_url(self.resolver.env["CHATWOOT_INTERNAL_URL"])}
-        return ChatwootClient(binding, credentials, self.transport)
+            origins.add(origin_identity(binding["base_url"]))
+        return ChatwootClient(binding, credentials, self.transport, attachment_origins=origins, attachment_private=internal)
 
     def state(self, service_id):
         binding = self.binding(service_id)
@@ -566,7 +576,7 @@ class ChatwootBridge:
                 await self.handoff(client, event, "event_expired")
                 self.finish(event, "handoff")
                 return
-            if wants_human(current["content"]):
+            if wants_human(current.get("content") or ""):
                 await self.handoff(client, event, "visitor_requested_human")
                 self.finish(event, "handoff")
                 return
@@ -579,6 +589,8 @@ class ChatwootBridge:
             history, remaining = [], MAX_CONTEXT_CHARS
             protected = [value for key, value in self.resolver.env.items() if ("TOKEN" in key or "SECRET" in key or "PASSWORD" in key or "KEY" in key) and value]
             protected.extend(client.credentials.values())
+            protected.extend(item['data_url'] for item in (current.get('attachments') or [])
+                             if isinstance(item, dict) and isinstance(item.get('data_url'), str) and item['data_url'])
             config = self.resolver.resolve(sid)
             protected.append(self.resolver.credential(config))
             for row in reversed(before[-MAX_HISTORY:]):
@@ -588,18 +600,41 @@ class ChatwootBridge:
                 allowed_bot = row.get("message_type") in {1, "outgoing"} and sender.get("type") == "agent_bot" and sender.get("id") == binding["bot_id"]
                 if not (is_incoming(row) or allowed_bot) or row.get("private") is not False:
                     continue
-                text = row.get("content", "")[:min(4000, remaining)]
+                text = (row.get("content") or "")[:min(4000, remaining)]
+                if row.get("attachments") and not allowed_bot:
+                    text += "\n[该历史消息含附件；本轮未重新读取历史图片，不得推断其内容。]"
+                    text = text[:min(4000, remaining)]
                 for secret in protected:
                     text = text.replace(secret, "[已隐藏凭据]")
                 history.insert(0, {"role": "assistant" if allowed_bot else "user", "content": text})
                 remaining -= len(text)
                 if remaining <= 0:
                     break
-            text = current["content"][:32000]
+            text = (current.get("content") or "")[:32000]
             for secret in protected:
                 text = text.replace(secret, "[已隐藏凭据]")
-            result = await self.engine.respond(text, sid, history=history, redact_values=protected)
-            reply = result["reply"][:32000]
+            if current.get("attachments"):
+                from .images import ChatwootImages, IMAGE_FEEDBACK
+                # Attachment and provider failures produce ONE honest feedback
+                # reply via the same dedup/send/human fences, not a text-only
+                # fallback which could pretend to have seen an unread image.
+                try:
+                    if not config.supports_vision:
+                        raise RuntimeFailure("vision_not_supported", 422)
+                    if current.get("sender", {}).get("id") != (conversation.get("meta", {}).get("sender") or {}).get("id"):
+                        raise RuntimeFailure("image_invalid_attachment", 422)
+                    images = await ChatwootImages(client).read(current, cid)
+                    result = await self.engine.respond(text, sid, history=history, redact_values=protected, images=images)
+                    reply = result["reply"][:32000]
+                except RuntimeFailure as error:
+                    code = error.code if error.code in IMAGE_FEEDBACK else "image_provider_failed"
+                    reply = IMAGE_FEEDBACK[code]
+                    # A stable code only; never log URLs, image bytes or exception text.
+                    import logging
+                    logging.getLogger("ai_runtime").warning("Image request unavailable code=%s", code)
+            else:
+                result = await self.engine.respond(text, sid, history=history, redact_values=protected)
+                reply = result["reply"][:32000]
             for secret in protected:
                 reply = reply.replace(secret, "[已隐藏凭据]")
             newest = await client.messages(cid)

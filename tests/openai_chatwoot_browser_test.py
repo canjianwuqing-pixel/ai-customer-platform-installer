@@ -1,8 +1,11 @@
 """Actual Chromium HTTPS forms, dynamic model discovery and inbox binding."""
 
 from pathlib import Path
+import json
 import tempfile
 import unittest
+
+import httpx
 
 import admin_forms_browser_test as visual
 from openai_chatwoot_test import ChatwootProtocol
@@ -16,6 +19,33 @@ class IntegrationBrowserFixtures(unittest.TestCase):
     def setUp(self):
         self.protocol = ChatwootProtocol()
         visual.VisualBrowserFixtures.setUp(self)
+
+    def test_visual_vision_switch_and_multimodal_connection_probe(self):
+        requests = []
+        def provider(request):
+            body = json.loads(request.content)
+            requests.append(body)
+            return httpx.Response(200, json={'choices': [{'message': {'content': 'blue'}}]})
+        self.runtime.state.chatwoot.engine.provider.transport = httpx.MockTransport(provider)
+        self.open('ai')
+        self.fill('id', 'vision-profile')
+        self.fill('model', 'freely-selected/vision')
+        self.fill('api_key', 'sk-vision-browser-fixture-not-real-1234567890123')
+        switch = self.page.get_by_role('switch', name='此模型支持图片识别')
+        self.assertFalse(switch.is_checked())
+        self.assertIn('费用', self.page.locator('#hint-supports_vision').inner_text())
+        switch.check()
+        self.page.get_by_role('button', name='测试模型连接').click()
+        self.page.locator('#model-feedback').filter(has_text='图片连接测试成功').wait_for()
+        self.assertEqual(requests[-1]['model'], 'freely-selected/vision')
+        self.assertEqual(requests[-1]['messages'][-1]['content'][1]['type'], 'image_url')
+        self.save('ai')
+        self.open('ai', 'vision-profile')
+        self.assertTrue(switch.is_checked())
+        switch.uncheck()
+        self.save('ai')
+        self.open('ai', 'vision-profile')
+        self.assertFalse(switch.is_checked())
 
     def test_real_browser_models_credentials_manual_fallback_and_chatwoot(self):
         key = "sk-browser-fixture-not-real-1234567890123456"

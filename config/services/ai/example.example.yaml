@@ -3,3 +3,6 @@
 model: ""
 api_base_url: ""
 api_key_env: OPENAI_API_KEY
+# Only enable after the provider confirms THIS selected model accepts images.
+# Images incur provider-specific token charges; no model-name whitelist is used.
+supports_vision: false
