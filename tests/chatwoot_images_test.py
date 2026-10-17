@@ -15,8 +15,8 @@ from PIL import Image, ImageDraw
 import openai_chatwoot_test as integration
 from admin_forms_test import Editor
 from ai_runtime.chatwoot import ChatwootBridge, ChatwootClient
-from ai_runtime.config import RuntimeFailure, ServiceResolver
-from ai_runtime.engine import RuntimeEngine, ChatProvider
+from ai_runtime.config import RuntimeConfig, RuntimeFailure, ServiceResolver
+from ai_runtime.engine import RuntimeEngine, ChatProvider, build_messages
 from ai_runtime.images import ChatwootImages, IMAGE_FEEDBACK, MAX_IMAGE_BYTES, normalize_image, storage_url
 
 
@@ -37,6 +37,69 @@ class BytesStream(httpx.AsyncByteStream):
             await asyncio.sleep(self.delay)
         for offset in range(0, len(self.data), 1024):
             yield self.data[offset:offset + 1024]
+
+
+class ImagePromptFixtures(unittest.TestCase):
+    """Assert instructions sent to a model, not a simulated model's visual ability."""
+
+    def config(self):
+        return RuntimeConfig(
+            service_id='service_a', model='configured-model',
+            api_base_url='https://provider.example.test/v1', api_key_env='KEY_A',
+            system_prompt='当前实例的客服政策', reply_rules=('当前实例的回复规则',),
+            knowledge_source=None, knowledge_max_characters=200, supports_vision=True,
+        )
+
+    def test_image_only_default_requests_troubleshooting_not_ui_inventory(self):
+        parts = build_messages(self.config(), '', images=('data:image/jpeg;base64,fixture',))[-1]['content']
+        prompt = parts[0]['text']
+        for instruction in ('错误原文', '可能原因', '排查步骤', '当前实例知识库',
+                            '客户端支持政策', '不要大量描述', '不要猜测', '最多只问一个'):
+            with self.subTest(instruction=instruction):
+                self.assertIn(instruction, prompt)
+
+    def test_no_obvious_fault_or_unclear_scene_requires_clarification_not_a_diagnosis(self):
+        prompt = build_messages(self.config(), '', images=('fixture-image',))[-1]['content'][0]['text']
+        for instruction in ('如果没有明显故障', '用户需求不明确', '简短询问', '不臆造故障',
+                            '场景不明时不要直接认定具体操作', '不依赖该假设的安全检查',
+                            '无法辨认的文字要明确说明', '不编造平台政策、教程或链接'):
+            self.assertIn(instruction, prompt)
+        # Client/error-specific guidance belongs to the selected instance, not
+        # to generic runtime code. This does not test actual screenshot OCR.
+        for specific in ('Shadowrocket', '未能找到使用指定主机名的服务器', 'DNS', '订阅更新', '节点连接'):
+            self.assertNotIn(specific, prompt)
+
+    def test_empty_or_whitespace_images_use_same_user_role_fallback_and_keep_image_parts(self):
+        images = ('data:image/jpeg;base64,first', 'data:image/jpeg;base64,second')
+        expected = build_messages(self.config(), '', images=images)
+        self.assertEqual(expected[0], {'role': 'system', 'content': '当前实例的客服政策\n当前实例的回复规则'})
+        self.assertEqual(expected[-1]['role'], 'user')
+        self.assertEqual(expected[-1]['content'][1:], [
+            {'type': 'image_url', 'image_url': {'url': image, 'detail': 'auto'}} for image in images
+        ])
+        for text in ('', ' ', '\t\r\n', '\u3000'):
+            self.assertEqual(build_messages(self.config(), text, images=images), expected)
+
+    def test_mixed_message_keeps_users_exact_question_without_default_instructions(self):
+        for question in ('请只解释按钮作用，不需要排障。',
+                         '  Shadowrocket 显示“未能找到使用指定主机名的服务器。”\n这是订阅更新时出现的，怎么处理？  '):
+            with self.subTest(question=question):
+                parts = build_messages(self.config(), question, images=('fixture-image',))[-1]['content']
+                self.assertEqual(parts[0], {'type': 'text', 'text': question})
+                self.assertEqual(len(parts), 2)
+
+    def test_text_only_and_conversation_history_are_not_rewritten(self):
+        history = [{'role': 'user', 'content': '上次讨论的操作'}, {'role': 'assistant', 'content': '请提供截图'}]
+        original = copy.deepcopy(history)
+        for text in ('请继续排查', ''):
+            messages = build_messages(self.config(), text, history=history)
+            self.assertEqual(messages, [
+                {'role': 'system', 'content': '当前实例的客服政策\n当前实例的回复规则'},
+                *original, {'role': 'user', 'content': text},
+            ])
+        messages = build_messages(self.config(), '', history=history, images=('fixture-image',))
+        self.assertEqual(messages[1:-1], original)
+        self.assertEqual(history, original)
 
 
 class ImageFlowFixtures(unittest.TestCase):
@@ -125,6 +188,24 @@ class ImageFlowFixtures(unittest.TestCase):
         self.assertEqual(len(self.f.protocol.sent), 1)
         self.assertEqual(len(self.downloads), 2)
         self.assertIsInstance(self.inputs[-1]['messages'][-1]['content'], list)
+        self.assertIn('错误原文', self.inputs[-1]['messages'][-1]['content'][0]['text'])
+
+    def test_featureless_image_still_sends_conditional_help_instructions(self):
+        # The provider is mocked: validate the conditional request, NOT whether
+        # a model can decide that this deliberately blank picture has no fault.
+        row = self.picture()
+        stream = BytesIO()
+        with Image.new('RGB', (300, 100), 'white') as image:
+            image.save(stream, 'PNG')
+        raw = stream.getvalue()
+        for path in self.files:
+            self.files[path] = raw, 'image/png'
+        row['attachments'][0]['file_size'] = len(raw)
+        self.deliver(row)
+        prompt = self.inputs[-1]['messages'][-1]['content'][0]['text']
+        self.assertIn('如果没有明显故障', prompt)
+        self.assertIn('简短询问用户需要什么帮助', prompt)
+        self.assertIn('不臆造故障', prompt)
 
     def test_png_jpeg_webp_with_text_and_software_error_request(self):
         for fmt in ('PNG', 'JPEG', 'WEBP'):
@@ -377,13 +458,25 @@ class ImageFlowFixtures(unittest.TestCase):
         self.enable_vision(key='model_b')
         self.f.service('service_b', model='model_b')
         self.f.connect('service_b', 8)
+        # A scenario-specific tutorial/policy is fixture knowledge, not an OCR
+        # assertion. No real screenshot or live model is involved in this test.
+        policies = {
+            'service_a': '当前平台支持 Shadowrocket；仅提供本平台教程。',
+            'service_b': '当前平台不支持该客户端；请按本平台支持政策答复。',
+        }
+        knowledge = {
+            'service_a': ('Shadowrocket 错误：“未能找到使用指定主机名的服务器。”可能是 DNS 或目标域名访问异常。'
+                          '按本平台教程先核对地址、网络及 DNS；未确认时不要认定是订阅更新或节点连接。'),
+            'service_b': '另一个平台的独立教程，不使用其他平台的客户端配置。',
+        }
         for sid in ('service_a', 'service_b'):
-            for kind, record in (('prompts', {'id': sid, 'system_prompt': 'prompt-' + sid}),
-                    ('knowledge', {'id': sid, 'source': 'knowledge.txt'})):
+            for kind, record in (('prompts', {'id': sid, 'system_prompt': 'prompt-' + sid,
+                                            'reply_rules': [policies[sid]]}),
+                    ('knowledge', {'id': sid, 'source': 'knowledge.txt', 'max_characters': 256})):
                 self.assertEqual(self.f.api.post('/management/profiles/' + kind, json=record).status_code, 201)
             root = self.f.resolver.data_dir / 'services' / sid
             root.mkdir(parents=True, exist_ok=True)
-            (root / 'knowledge.txt').write_text('knowledge-' + sid, encoding='utf-8')
+            (root / 'knowledge.txt').write_text(knowledge[sid].ljust(256, ' ') + 'TRUNCATED-' + sid, encoding='utf-8')
             self.assertEqual(self.f.api.patch('/management/services/' + sid, json={'prompt_config': sid, 'knowledge_config': sid}).status_code, 200)
         a = self.picture(color='blue')
         b = self.picture(cid=101, inbox=8, color='red')
@@ -391,10 +484,19 @@ class ImageFlowFixtures(unittest.TestCase):
         self.deliver(b, 'service_b')
         for index, sid in enumerate(('service_a', 'service_b')):
             other = 'service_b' if sid == 'service_a' else 'service_a'
-            text = json.dumps(self.inputs[index])
+            text = json.dumps(self.inputs[index], ensure_ascii=False)
             self.assertIn('prompt-' + sid, text)
-            self.assertIn('knowledge-' + sid, text)
+            self.assertIn(knowledge[sid], text)
+            self.assertIn(policies[sid], text)
             self.assertNotIn(other, text)
+            self.assertNotIn(knowledge[other], text)
+            self.assertNotIn(policies[other], text)
+            self.assertNotIn('TRUNCATED-', text)
+            self.assertEqual(self.inputs[index]['messages'][0], {
+                'role': 'system', 'content': 'prompt-' + sid + '\n' + policies[sid],
+            })
+            self.assertIn('当前实例知识库', self.inputs[index]['messages'][-1]['content'][0]['text'])
+            self.assertIn('不得引用其他客服实例', self.inputs[index]['messages'][-1]['content'][0]['text'])
         self.assertNotEqual(self.inputs[0]['messages'][-1]['content'][1], self.inputs[1]['messages'][-1]['content'][1])
         self.assertEqual([item['model'] for item in self.inputs], ['vendor/arbitrary-model-2077', 'other/vision-model'])
         self.assertEqual(self.f.hook(a, 'service_b').status_code, 422)
