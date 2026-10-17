@@ -1,2 +1,4 @@
 # Optional test-only dependencies; never installed in production Admin images.
 playwright==1.64.0
+# Local ASGI WebSocket fixture for the real Nginx/TLS readiness tests.
+wsproto==1.2.0

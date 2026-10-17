@@ -22,7 +22,14 @@ website_task() {
   local action="$1"; shift
   domain_initialize_config
   case "${action}" in
-    apply) nginx_apply_candidate "$1" >/dev/null ;;
+    apply)
+      # Only these fixed phase/status frames leave this subprocess. Raw Nginx
+      # output/configuration is NOT diagnostic data and remains suppressed.
+      (
+        nginx_candidate_event() { printf 'PLATFORM_SITE_EVENT %s %s\n' "$1" "$2" >&3; }
+        nginx_apply_candidate "$1" 3>&1 >/dev/null
+      )
+      ;;
     alias)
       [[ "${AI_RUNTIME_BUILD:-false}" == true ]] || return 0
       validation_is_hostname "$1" || return 1

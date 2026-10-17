@@ -5,6 +5,7 @@ Certbot only writes its own webroot lineage. Existing sites are never removed.
 """
 
 from copy import deepcopy
+from contextlib import contextmanager
 import ipaddress
 import json
 import os
@@ -18,6 +19,8 @@ import tempfile
 import time
 from html.parser import HTMLParser
 from urllib.parse import urljoin, urlsplit
+
+from .site_diagnostics import SiteDiagnostics, error_code
 
 
 class SiteError(Exception):
@@ -104,6 +107,9 @@ def validate_registry(value):
 
 
 class WebsiteDomains:
+    PROBE_READY_SECONDS = 30.0
+    PROBE_INTERVAL_SECONDS = 0.25
+
     def __init__(self, env, execute=None):
         self.env = env
         self.root = Path(env["INSTALLER_ROOT"])
@@ -111,19 +117,82 @@ class WebsiteDomains:
         self.path = self.directory / "website-domains.json"
         self.site = Path(env["NGINX_SITE_CONFIG_PATH"])
         self.execute = execute or subprocess.run
+        self.diagnostics = None
 
-    def command(self, args, *, input=None):
+    def event(self, stage, status, code="ok", **fields):
+        if self.diagnostics is not None:
+            self.diagnostics.record(stage, status, code, **fields)
+
+    @contextmanager
+    def stage(self, name, **fields):
+        self.event(name, "start", **fields)
+        try:
+            yield
+        except Exception as exc:
+            code = error_code(exc)
+            if code == "site_operation_failed":
+                code = {"nginx_staging": "nginx_apply_failed", "admin": "domain_access_failed",
+                        "static_assets": "chatwoot_assets_unavailable", "save": "site_save_failed"}.get(name, code)
+            self.event(name, "error", code, **fields)
+            raise
+        else:
+            self.event(name, "ok", **fields)
+
+    def nginx_events(self, output):
+        failed = ""
+        for line in output.splitlines():
+            match = re.fullmatch(rb"PLATFORM_SITE_EVENT (nginx_test|nginx_reload) (start|ok|error)", line)
+            if match:
+                phase, status = (value.decode("ascii") for value in match.groups())
+                code = phase + "_failed" if status == "error" else "ok"
+                self.event(phase, status, code)
+                if status == "error":
+                    failed = code
+        return failed
+
+    def command(self, args, *, input=None, nginx_events=False):
         try:
             result = self.execute(args, input=input, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                                   timeout=360, shell=False, cwd=self.root)
         except (OSError, subprocess.SubprocessError):
-            raise SiteError("site_operation_failed") from None
+            raise SiteError("nginx_apply_failed" if nginx_events else "site_operation_failed") from None
+        failed = self.nginx_events(result.stdout) if nginx_events else ""
         if result.returncode:
-            raise SiteError("site_operation_failed")
+            raise SiteError(failed or ("nginx_apply_failed" if nginx_events else "site_operation_failed"))
         return result.stdout
 
     def task(self, action, *args):
-        return self.command(["/bin/bash", str(self.root / "install.sh"), "__website-task", action, *args])
+        return self.command(["/bin/bash", str(self.root / "install.sh"), "__website-task", action, *args], nginx_events=action == "apply")
+
+    def inspect(self, domain):
+        # Consume nginx -T in memory only. It may contain OTHER applications'
+        # credentials and our nonce: never persist, print or return the dump.
+        with self.stage("nginx_inspect"):
+            try:
+                result = self.execute(["nginx", "-T"], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                      timeout=10, shell=False, cwd=self.root)
+            except (OSError, subprocess.SubprocessError):
+                raise SiteError("nginx_inspect_failed") from None
+            if result.returncode:
+                raise SiteError("nginx_inspect_failed")
+            included, present = False, False
+            sections = re.split(rb"(?m)^# configuration file ([^\r\n]+):\r?$", result.stdout)
+            for i in range(1, len(sections), 2):
+                try:
+                    source = Path(os.fsdecode(sections[i])).resolve()
+                except (OSError, ValueError):
+                    continue
+                if source == self.site.resolve():
+                    included = True
+                    present = bool(re.search(rb"(?m)^\s*server_name\s+" + re.escape(domain.encode("ascii")) + rb"\s*;", sections[i + 1]))
+            conflict = bool(re.search(rb'conflicting server name "' + re.escape(domain.encode("ascii")) + rb'"', result.stderr))
+            self.event("nginx_inspect", "attempt", site_included=included, server_name_present=present, name_conflict=conflict)
+            if not included:
+                raise SiteError("nginx_site_not_included")
+            if not present:
+                raise SiteError("nginx_server_name_missing")
+            if conflict:
+                raise SiteError("nginx_server_name_conflict")
 
     def switch(self, registry, previous):
         row = next(r for r in registry["domains"] if r["domain"] == registry["primary"])
@@ -237,39 +306,82 @@ class WebsiteDomains:
         except (OSError, ValueError):
             raise SiteError("domain_dns_failed") from None
 
+    def wait_nonce(self, args, origin, nonce, deadline, stage, address, port):
+        attempt = 0
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise SiteError("domain_" + stage + "_timeout")
+            attempt += 1
+            try:
+                result = self.execute(args + ["--connect-timeout", "2", "--max-time", str(min(3.0, remaining)),
+                    "--max-filesize", "4096", "--write-out", "\n%{http_code}", origin + "/.__platform-domain-check"],
+                    stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=min(3.0, remaining) + .25,
+                    shell=False, cwd=self.root)
+                body, _, status = result.stdout.rpartition(b"\n")
+                status = int(status) if re.fullmatch(rb"[0-9]{3}", status) else 0
+                curl_code = result.returncode
+            except subprocess.TimeoutExpired:
+                status, body, curl_code = 0, b"", 28
+            except OSError:
+                raise SiteError("domain_probe_failed") from None
+            matched = curl_code == 0 and status == 200 and body == nonce.encode("ascii")
+            code = "ok" if matched else ("tls_verification_failed" if curl_code == 60 else
+                "domain_nonce_mismatch" if status == 200 else "domain_probe_failed")
+            self.event(stage, "attempt", code, address=address, port=int(port), attempt=attempt,
+                http_status=status, curl_code=curl_code, nonce_match=matched)
+            if matched:
+                return
+            # New curl processes/connections for every attempt; no redirects,
+            # cookies, credentials, SSL bypass or reuse of an old worker socket.
+            if curl_code not in {0, 7, 18, 28, 35, 52, 56, 60, 63}:
+                raise SiteError("domain_probe_failed")
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise SiteError("domain_" + stage + "_timeout")
+            time.sleep(min(self.PROBE_INTERVAL_SECONDS, remaining))
+
     def probe(self, domain, nonce, *, https=True):
         port = self.env["DOMAIN_HTTPS_PORT" if https else "NGINX_LISTEN_PORT"]
         scheme = "https" if https else "http"
-        # Every published A/AAAA record must reach OUR staged vhost. This also
-        # handles NAT without guessing a server's public IP from a third party.
-        for address in self.addresses(domain):
+        origin = f"{scheme}://{domain}:{port}"
+        with self.stage("dns"):
+            addresses = self.addresses(domain)
+            self.event("dns", "attempt", addresses=addresses)
+        # One shared budget for local readiness AND all A/AAAA addresses, not
+        # 30 seconds per IP. Local success never substitutes for public reachability.
+        deadline = time.monotonic() + self.PROBE_READY_SECONDS
+        for local, address in [(True, "127.0.0.1"), *[(False, ip) for ip in addresses]]:
+            stage = scheme + ("_local" if local else "_public")
             ip = "[" + address + "]" if ":" in address else address
-            args = ["curl", "--noproxy", "*", "--silent", "--show-error", "--fail", "--max-time", "15",
-                    "--resolve", f"{domain}:{port}:{ip}"]
-            origin = f"{scheme}://{domain}:{port}"
-            if self.command(args + [origin + "/.__platform-domain-check"]).decode() != nonce:
-                raise SiteError("domain_access_failed")
-            if https:
+            args = ["curl", "--noproxy", "*", "--silent", "--show-error", "--resolve", f"{domain}:{port}:{ip}"]
+            with self.stage(stage, address=address, port=int(port)):
+                self.wait_nonce(args, origin, nonce, deadline, stage, address, port)
+            if https and not local:
+                args += ["--fail", "--max-time", "15"]
                 if self.env.get("ADMIN_ENABLED") == "true":
-                    page = self.command(args + [origin + "/admin/login"])
-                    if b'name="csrf"' not in page:
+                    with self.stage("admin", address=address):
+                        page = self.command(args + [origin + "/admin/login"])
+                        if b'name="csrf"' not in page:
+                            raise SiteError("domain_access_failed")
+                with self.stage("static_assets", address=address):
+                    page = self.command(args + [origin + "/"])
+                    if not page:
                         raise SiteError("domain_access_failed")
-                page = self.command(args + [origin + "/"])
-                if not page:
-                    raise SiteError("domain_access_failed")
-                assets = Assets()
-                assets.feed(page.decode("utf-8"))
-                if not assets.urls:
-                    raise SiteError("chatwoot_assets_missing")
-                for source in assets.urls[:8]:
-                    url = urljoin(origin + "/", source)
-                    parsed = urlsplit(url)
-                    if parsed.scheme != "https" or parsed.hostname != domain:
-                        raise SiteError("chatwoot_cross_origin_asset")
-                    status = self.command(args + ["--output", os.devnull, "--write-out", "%{http_code}", url])
-                    if status != b"200":
-                        raise SiteError("chatwoot_assets_unavailable")
-                self.websocket(args, origin)
+                    assets = Assets()
+                    assets.feed(page.decode("utf-8"))
+                    if not assets.urls:
+                        raise SiteError("chatwoot_assets_missing")
+                    for source in assets.urls[:8]:
+                        url = urljoin(origin + "/", source)
+                        parsed = urlsplit(url)
+                        if parsed.scheme != "https" or parsed.hostname != domain:
+                            raise SiteError("chatwoot_cross_origin_asset")
+                        status = self.command(args + ["--output", os.devnull, "--write-out", "%{http_code}", url])
+                        if status != b"200":
+                            raise SiteError("chatwoot_assets_unavailable")
+                with self.stage("websocket", address=address):
+                    self.websocket(args, origin)
 
     def websocket(self, args, origin):
         # A real RFC6455 upgrade, not HTML 200. No visitor/management token is
@@ -300,6 +412,20 @@ class WebsiteDomains:
             raise SiteError("chatwoot_websocket_unavailable")
 
     def operation(self, action, domain="", *, restored=None):
+        self.diagnostics = SiteDiagnostics(self.directory, action, domain)
+        self.event("operation", "start")
+        try:
+            result = self._operation(action, domain, restored=restored)
+        except Exception as exc:
+            self.diagnostics.finish(False, exc)
+            raise
+        else:
+            self.diagnostics.finish(True)
+            return result
+        finally:
+            self.diagnostics = None
+
+    def _operation(self, action, domain="", *, restored=None):
         if action not in {"add", "primary", "delete", "reconcile", "restore-check", "restore"}:
             raise SiteError("operation_not_allowed")
         if domain:
@@ -316,20 +442,25 @@ class WebsiteDomains:
         if action == "delete" and (domain == old["primary"] or len(names) <= 1):
             raise SiteError("primary_domain_protected")
         if action == "restore-check":
-            for row in new["domains"]:
-                if self.certificate(row)["ssl_status"] != "有效":
-                    raise SiteError("restore_certificate_invalid")
-                self.addresses(row["domain"])
+            with self.stage("certificate"):
+                for row in new["domains"]:
+                    if self.certificate(row)["ssl_status"] != "有效":
+                        raise SiteError("restore_certificate_invalid")
+                    with self.stage("dns"):
+                        self.event("dns", "attempt", addresses=self.addresses(row["domain"]))
             original = self.site.read_text(encoding="utf-8")
             combined = deepcopy(old)
             combined["domains"] += [r for r in new["domains"] if r["domain"] not in names]
             nonce = secrets.token_hex(24)
             try:
-                self.apply(self.render(combined, nonce=nonce))
+                with self.stage("nginx_staging"):
+                    self.apply(self.render(combined, nonce=nonce))
                 for row in new["domains"]:
+                    self.inspect(row["domain"])
                     self.probe(row["domain"], nonce)
             finally:
-                self.apply(original)
+                with self.stage("rollback"):
+                    self.apply(original)
             return
         if not self.site.is_file() or self.site.is_symlink():
             raise SiteError("managed_site_required")
@@ -344,21 +475,31 @@ class WebsiteDomains:
             if action == "add":
                 if len(names) >= 30:
                     raise SiteError("domain_limit")
-                self.addresses(domain)
-                self.apply(self.render(old, challenge=domain, nonce=nonce))
+                with self.stage("dns"):
+                    self.event("dns", "attempt", addresses=self.addresses(domain))
+                with self.stage("nginx_staging"):
+                    self.apply(self.render(old, challenge=domain, nonce=nonce))
+                self.inspect(domain)
                 self.probe(domain, nonce, https=False)
-                self.task("issue", domain)
+                with self.stage("certbot"):
+                    try:
+                        self.task("issue", domain)
+                    except SiteError:
+                        raise SiteError("certbot_failed") from None
                 base = Path(self.env["CERTBOT_CONFIG_DIR"]) / "live" / domain
                 new["domains"].append({"domain": domain, "fullchain": (base / "fullchain.pem").as_posix(), "private_key": (base / "privkey.pem").as_posix()})
             if action == "delete":
                 new["domains"] = [r for r in new["domains"] if r["domain"] != domain]
             if action == "primary":
                 new["primary"] = domain
-            for row in new["domains"]:
-                required = action == "restore" or row["domain"] == (domain if action in {"add", "primary"} else new["primary"])
-                if required and self.certificate(row)["ssl_status"] != "有效":
-                    raise SiteError("certificate_invalid")
-            self.apply(self.render(old if action == "delete" else new, nonce=nonce))
+            with self.stage("certificate"):
+                for row in new["domains"]:
+                    required = action == "restore" or row["domain"] == (domain if action in {"add", "primary"} else new["primary"])
+                    if required and self.certificate(row)["ssl_status"] != "有效":
+                        raise SiteError("certificate_invalid")
+            with self.stage("nginx_staging"):
+                self.apply(self.render(old if action == "delete" else new, nonce=nonce))
+            self.inspect(domain if action in {"add", "primary"} else new["primary"])
             # Do not depend on a failed old primary during failover/deletion.
             if action in {"add", "primary"}:
                 self.probe(domain, nonce)
@@ -370,33 +511,52 @@ class WebsiteDomains:
                 transaction["switch_started"] = True
                 atomic(journal, json.dumps(transaction).encode())
                 switched = True
-                self.switch(new, self.env["DOMAIN"])
+                with self.stage("primary"):
+                    self.switch(new, self.env["DOMAIN"])
             if action == "add":
-                self.task("alias", domain)
+                with self.stage("alias"):
+                    self.task("alias", domain)
             if action == "delete":
                 # A bot may have been bound while Admin was visited via this
                 # backup domain. Move its callback/API origin to the working
                 # primary BEFORE publishing removal; never recreate the bot.
-                self.task("retire", domain, new["primary"])
-            self.apply(self.render(new))
-            self.save(new)
-            journal.unlink()
+                with self.stage("retire"):
+                    self.task("retire", domain, new["primary"])
+            with self.stage("save"):
+                self.apply(self.render(new))
+                self.inspect(new["primary"])
+                self.save(new)
+                journal.unlink()
         except Exception:
             # No new state is published until HTTPS and dependencies succeed.
-            if switched:
-                self.switch(old, new["primary"])
-            self.apply(original)
-            if had_registry:
-                self.save(old)
-            elif self.path.exists():
-                self.path.unlink()
-            journal.unlink(missing_ok=True)
+            with self.stage("rollback"):
+                if switched:
+                    self.switch(old, new["primary"])
+                self.apply(original)
+                if had_registry:
+                    self.save(old)
+                elif self.path.exists():
+                    self.path.unlink()
+                journal.unlink(missing_ok=True)
             raise
 
     def recover(self):
         journal = self.directory / "website-pending.json"
         if not journal.exists():
             return
+        self.diagnostics = SiteDiagnostics(self.directory, "recover")
+        try:
+            with self.stage("recovery"):
+                self._recover(journal)
+        except Exception as exc:
+            self.diagnostics.finish(False, exc)
+            raise
+        else:
+            self.diagnostics.finish(True)
+        finally:
+            self.diagnostics = None
+
+    def _recover(self, journal):
         if journal.is_symlink() or journal.stat().st_size > 1_048_576:
             raise SiteError("unsafe_site_storage")
         previous = json.loads(journal.read_text(encoding="utf-8"))

@@ -113,13 +113,22 @@ class WebsiteNginxFixtures(unittest.TestCase):
             return f'include "{site.as_posix()}";\ninclude "{self.foreign.as_posix()}";'
 
         self.driver.extra_nginx_servers = included_sites
-        self.driver.leading_nginx_servers = lambda: 'server_names_hash_bucket_size 128;\n'
+        self.driver.leading_nginx_servers = lambda: ('server_names_hash_bucket_size 128;\n' +
+            (f'server {{ listen 127.0.0.1:{self.driver.http_port} default_server; server_name _; return 404; }}\n'
+             if getattr(self, 'http_default_404', False) else ''))
         with patch('platform_admin.app.create_app', return_value=self.backend):
             self.driver.setUp()  # includes a REAL nginx -t, never a stub
         self.original = self.manager.site.read_bytes()
         self.manager.task = self.task
+        self.manager.execute = self.execute
         self.manager.addresses = lambda domain: ['127.0.0.1']  # local-only DNS fixture
         self.manager.probe = self.probe
+
+    def execute(self, args, **kwargs):
+        if args[0] == 'nginx':
+            args = [self.driver.nginx, '-p', self.driver.directory.as_posix() + '/',
+                    '-c', str(self.driver.directory / 'nginx.conf'), *args[1:]]
+        return subprocess.run(args, **kwargs)
 
     def request(self, domain, path, *, https=True, method='GET', **kwargs):
         context = ssl.create_default_context()
@@ -165,6 +174,7 @@ class WebsiteNginxFixtures(unittest.TestCase):
             atomic(candidate, content.encode())
             env = {**os.environ, 'INSTALLER_ROOT': ROOT.as_posix(), 'TEST_NGINX_BINARY': str(self.driver.nginx),
                 'TEST_WEBSITE_PREFIX': self.driver.directory.as_posix(),
+                'TEST_WEBSITE_DEFER_RELOAD': 'true' if getattr(self, 'defer_reload', False) else 'false',
                 'NGINX_SITE_CONFIG_PATH': self.manager.site.as_posix(),
                 'NGINX_SITES_AVAILABLE_DIR': self.manager.site.parent.as_posix(),
                 'NGINX_SITES_ENABLED_DIR': (self.driver.directory / 'sites-enabled').as_posix(),
@@ -173,6 +183,7 @@ class WebsiteNginxFixtures(unittest.TestCase):
             result = subprocess.run([bash, str(ROOT / 'tests/fixtures/website-nginx-apply.sh'), str(candidate)],
                 env=env, capture_output=True, timeout=30)
             self.syntax_results.append(result.returncode)
+            self.manager.nginx_events(result.stdout)
             if result.returncode:
                 raise SiteError('fixture_apply_failure: ' + result.stderr.decode(errors='replace')[-1500:]
                     + result.stdout.decode(errors='replace')[-1500:])

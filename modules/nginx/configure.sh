@@ -230,6 +230,10 @@ nginx_prepare_api_header_policy() {
   fi
 }
 
+# Internal hook; website maintenance overrides it with fixed, secret-free
+# status frames. Ordinary installer calls retain the no-op implementation.
+nginx_candidate_event() { :; }
+
 nginx_apply_candidate() {
   local prepared_file result
   prepared_file="$(mktemp)" || return 1
@@ -339,13 +343,18 @@ nginx_apply_prepared_candidate() {
     enabled_link_created="true"
   fi
 
+  nginx_candidate_event nginx_test start
   if ! nginx_test_configuration; then
+    nginx_candidate_event nginx_test error
     nginx_rollback_site_config \
       "${had_existing_config}" "${backup_path}" "${config_changed}" "${enabled_link_created}" "${enabled_regular_replaced}"
     return 1
   fi
+  nginx_candidate_event nginx_test ok
 
+  nginx_candidate_event nginx_reload start
   if ! nginx_reload_service; then
+    nginx_candidate_event nginx_reload error
     nginx_rollback_site_config \
       "${had_existing_config}" "${backup_path}" "${config_changed}" "${enabled_link_created}" "${enabled_regular_replaced}"
     if nginx_test_configuration; then
@@ -358,6 +367,7 @@ nginx_apply_prepared_candidate() {
     log_error "Nginx configuration was valid, but the service could not be reloaded."
     return 1
   fi
+  nginx_candidate_event nginx_reload ok
 
   if [[ -n "${backup_path}" ]]; then
     log_info "[nginx] Previous managed site configuration retained at ${backup_path}."

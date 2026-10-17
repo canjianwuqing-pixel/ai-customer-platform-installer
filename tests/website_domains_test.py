@@ -56,6 +56,9 @@ class Host(WebsiteDomains):
         if self.fail == ("https" if https else "http"):
             raise SiteError("domain_access_failed")
 
+    def inspect(self, domain):
+        self.calls.append(("inspect", domain))  # host I/O double; real tests run nginx -T
+
 
 class WebsiteFixtures(unittest.TestCase):
     def setUp(self):
@@ -194,10 +197,11 @@ class WebsiteFixtures(unittest.TestCase):
             runner.command("domain-exec", "backup.example.test")
 
     def test_dns_requires_every_published_ip_to_reach_challenge_no_curl_insecure(self):
+        import subprocess
         manager = WebsiteDomains(self.host.env)
-        with patch.object(manager, "addresses", return_value=["203.0.113.7", "2001:db8::1"]), patch.object(manager, "command", return_value=b"nonce") as execute:
+        with patch.object(manager, "addresses", return_value=["203.0.113.7", "2001:db8::1"]), patch.object(manager, "execute", return_value=subprocess.CompletedProcess([], 0, b"nonce\n200")) as execute:
             manager.probe("backup.example.test", "nonce", https=False)
-            self.assertEqual(execute.call_count, 2)
+            self.assertEqual(execute.call_count, 3)  # local readiness + ALL A/AAAA
             for call in execute.call_args_list:
                 self.assertNotIn("--insecure", call.args[0])
                 self.assertIn("--noproxy", call.args[0])
@@ -220,6 +224,8 @@ class WebsiteFixtures(unittest.TestCase):
             import base64
             import hashlib
             calls.append(args)
+            if args[-1].endswith("/.__platform-domain-check"):
+                return subprocess.CompletedProcess(args, 0, b"nonce\n200")
             key = next(arg.split(": ", 1)[1] for arg in args if arg.startswith("Sec-WebSocket-Key: "))
             accept = base64.b64encode(hashlib.sha1((key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").encode()).digest())
             return subprocess.CompletedProcess(args, 28, b"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nSec-WebSocket-Accept: " + accept + b"\r\n\r\n")
@@ -229,7 +235,7 @@ class WebsiteFixtures(unittest.TestCase):
             self.assertTrue(any(args[-1].endswith("/vite/assets/dashboard.js") for args in calls))
             self.assertTrue(any(args[-1].endswith("/cable") for args in calls))
             self.assertTrue(any("--header" in args for args in calls))
-        with patch.object(manager, "addresses", return_value=["203.0.113.7"]), patch.object(manager, "command", return_value=b"wrong-marker"):
+        with patch.object(manager, "addresses", return_value=["203.0.113.7"]), patch.object(manager, "execute", return_value=subprocess.CompletedProcess([], 1, b"wrong-marker")):
             with self.assertRaises(SiteError):
                 manager.probe("backup.example.test", "nonce")
 

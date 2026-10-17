@@ -25,7 +25,29 @@ HTTPS 模板和 HTTP-01 暂存模板各有唯一一行 `    # PLATFORM_DOMAIN_CH
 
 `tests/website_nginx_test.py` 使用真实 Nginx `-t`、master/worker reload、临时 TLS 证书和一主多备虚拟主机，调用现有 `nginx_apply_candidate`，覆盖 HTTP 暂存、HTTPS 到达验证、nonce 清理、重复执行和语法/签发/访问失败回滚。签名 Webhook 经过实际生成的 Nginx location，再由现有 Runtime 校验和处理；错误签名及非 POST 仍被拒绝。DNS、Certbot 签发和外部 Chatwoot/OpenAI 为隔离协议 fixture，不代表公网 DNS 或真实证书签发验收。
 
-### 此渲染修复的安全更新
+### HTTP 预验证就绪等待与服务器端诊断
+
+reload 命令返回成功只代表控制操作已被接受，不代表新 Worker 已处理请求。[Nginx 官方说明](https://nginx.org/en/docs/control.html#reconfiguration)描述了检查配置、创建新 Worker、旧 Worker 优雅退出的过程。单条 404 不能单独证明时序问题，也可能是站点未被 include、同名虚拟主机冲突、公网回环/NAT 或其他转发路径错误。
+
+现在会在暂存后通过 `nginx -T` 检查目标文件确实包含在配置中、目标 `server_name` 存在且没有同名冲突。只在内存中分析输出，**不记录完整配置或 stderr**。检查失败立即回滚，不覆盖其他软件的站点，也不通过调整 default_server 来抢占域名。
+
+HTTP/HTTPS 的 nonce 验证分别使用 **30 秒总预算**，本机就绪检查与该轮全部 A/AAAA 地址共享预算，而非每个 IP 额外等待 30 秒。每次 curl 是新进程、新连接，单次最多 3 秒，重试间隔最多 250ms；404、连接失败、暂时旧响应可以重试，但始终要求 **HTTP 200、curl 成功且正文与 nonce 字节完全一致**。不跟随重定向，不发送 Cookie/Token，不使用 `-k`；TLS 失败即使重试也必须最终通过正常证书校验。本机验证成功不替代任何公网地址检查；所有公网地址通过后才允许执行 Certbot。超时明确失败并恢复原站点。
+
+诊断文件位于配置的 `ADMIN_MAINTENANCE_STATE_DIR/website-diagnostics/<记录ID>.json`，目录 0700、文件 0600，仅供服务器管理员读取。保留最近 32 次操作、每次最多 512 个事件；只保存 DNS 地址、阶段、固定错误码、HTTP/curl 状态、重试次数、nonce 是否匹配的布尔值及耗时等白名单字段。**不保存 nonce 值、命令、配置快照、响应正文、Token、API Key、私钥、Cookie 或访客凭据**。记录ID与验证 nonce 独立生成。诊断目录不挂载到 Admin 容器，不新增网页或 HTTP 查询接口，现有维护接口仍只返回公开域名状态。
+
+阶段包括 `dns`、`nginx_staging`、`nginx_test`、`nginx_reload`、`nginx_inspect`、`http_local/public`、`certbot`、`certificate`、`https_local/public`、`admin`、`static_assets`、`websocket`、`save` 和 `rollback`。Nginx 检查/reload 阶段使用子任务返回的固定状态回执，不采集原始日志；崩溃恢复另建 `recover` 记录。最终 `failed_stage`、`error_code` 指向首次失败，回滚结果也记录在 events 中。诊断磁盘写入故障不会阻止原站点回滚。
+
+管理员在服务器上按时间查看最新 JSON，可据此区分：
+
+- `nginx_site_not_included`：修改的站点没有被实际检查的 Nginx 配置包含。
+- `nginx_server_name_conflict`：目标域名有虚拟主机冲突；其他软件的站点不会被自动删除。
+- `domain_http_local_timeout`：配置检查/reload 成功，但本机正确 Host 仍未获得 nonce，不能认为已就绪。
+- `domain_http_public_timeout`：本机已通过，但某个公网 A/AAAA 地址未通过；继续检查对应地址的公网回环/NAT/转发路径，**不能据此自动断定是哪一项**。
+- `domain_https_*_timeout` 配合 `tls_verification_failed`：HTTPS 尚未通过严格 TLS/nonce 校验，不回退为 HTTP。
+
+诊断文件是本机运维记录，不属于业务配置备份，恢复备份不导入旧主机的诊断；网站清单、凭据和业务数据继续走原有备份机制。没有新增 `.env` 配置或数据库迁移。测试依赖见 `tests/requirements-browser.txt`，新增 wsproto 仅供本地 WebSocket 协议夹具，不进入生产依赖。
+
+### 此预验证修复的安全更新
 
 先在后台确认没有进行中的维护任务，保存现有备份。待修复提交发布到远程后，在原项目目录以原服务器管理用户操作，工作区不干净或不能快进时停止：
 
@@ -44,7 +66,7 @@ HTTPS 模板和 HTTP-01 暂存模板各有唯一一行 `    # PLATFORM_DOMAIN_CH
 )
 ```
 
-本修复仅改变宿主机域名渲染器及模板，不迁移数据库，不修改 `.env`、私钥、现有证书或管理员配置。现有维护执行器每次域名任务通过 `install.sh __website-domains` 启动新进程，直接读取更新后的代码和模板，因此仅为应用本修复**无需重新安装或重建任何业务容器，也无需中断维护执行器**。更新代码不会立即改写正在使用的站点；回到原 `/admin` 重试添加备用域名，任务会先验证暂存配置、按原流程签发证书及校验 HTTPS，全部成功后才发布，失败保留原站点。若远程还有其他版本变更，需先审阅这些变更并遵循相应升级说明。
+本修复只调整宿主机域名验证、受保护诊断及 Nginx 子任务回执，不迁移数据库，不修改 `.env`、私钥、现有证书或管理员配置。现有维护执行器每次域名任务通过 `install.sh __website-domains` 启动新进程，直接读取更新后的代码和模板，因此仅为应用本修复**无需重新安装或重建任何业务容器，也无需中断维护执行器**。更新代码不会立即改写正在使用的站点；回到原 `/admin` 重试添加备用域名，任务会先验证暂存配置、按原流程签发证书及校验 HTTPS，全部成功后才发布，失败保留原站点。若远程还有其他版本变更，需先审阅这些变更并遵循相应升级说明。
 
 ## 主域名切换与故障恢复
 
