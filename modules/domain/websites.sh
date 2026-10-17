@@ -51,7 +51,9 @@ website_task() {
       domain_install_renew_hook >/dev/null
       domain_enable_automatic_renewal >/dev/null
       if [[ "${CERTBOT_RENEW_DRY_RUN}" == true ]]; then
-        domain_certbot renew --dry-run --cert-name "$1" >/dev/null
+        # Explicit validation is bounded by the host task deadline. Certbot
+        # 1.21 otherwise sleeps randomly for up to 480s in non-interactive mode.
+        domain_certbot renew --dry-run --no-random-sleep-on-renew --cert-name "$1" >/dev/null
       fi
       ;;
     primary)

@@ -11,6 +11,7 @@ import time
 STAGES = set('operation dns nginx_staging nginx_test nginx_reload nginx_inspect http_local http_public certbot certificate https_local https_public admin static_assets websocket primary alias retire save rollback recovery'.split())
 CODES = set('ok site_operation_failed invalid_site_template unsafe_site_storage domain_dns_failed domain_access_failed certificate_invalid restore_certificate_invalid nginx_test_failed nginx_reload_failed nginx_apply_failed nginx_inspect_failed nginx_site_not_included nginx_server_name_missing nginx_server_name_conflict domain_http_local_timeout domain_http_public_timeout domain_https_local_timeout domain_https_public_timeout domain_probe_failed domain_probe_timeout domain_nonce_mismatch tls_verification_failed chatwoot_assets_missing chatwoot_cross_origin_asset chatwoot_assets_unavailable chatwoot_websocket_unavailable certbot_failed site_save_failed'.split())
 CODES.update('invalid_domain invalid_site_registry invalid_certificate_path invalid_domain_nonce operation_not_allowed domain_already_exists domain_not_found primary_domain_protected domain_limit managed_site_required'.split())
+CODES.update('site_task_timeout certbot_timeout'.split())
 
 
 def error_code(error):

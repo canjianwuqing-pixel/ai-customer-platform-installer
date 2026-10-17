@@ -21,6 +21,7 @@ from html.parser import HTMLParser
 from urllib.parse import urljoin, urlsplit
 
 from .site_diagnostics import SiteDiagnostics, error_code
+from .site_process import run_site_command
 
 
 class SiteError(Exception):
@@ -116,7 +117,7 @@ class WebsiteDomains:
         self.directory = Path(env["ADMIN_MAINTENANCE_STATE_DIR"])
         self.path = self.directory / "website-domains.json"
         self.site = Path(env["NGINX_SITE_CONFIG_PATH"])
-        self.execute = execute or subprocess.run
+        self.execute = execute or run_site_command
         self.diagnostics = None
 
     def event(self, stage, status, code="ok", **fields):
@@ -154,6 +155,8 @@ class WebsiteDomains:
         try:
             result = self.execute(args, input=input, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                                   timeout=360, shell=False, cwd=self.root)
+        except subprocess.TimeoutExpired:
+            raise SiteError("nginx_apply_failed" if nginx_events else "site_task_timeout") from None
         except (OSError, subprocess.SubprocessError):
             raise SiteError("nginx_apply_failed" if nginx_events else "site_operation_failed") from None
         failed = self.nginx_events(result.stdout) if nginx_events else ""
@@ -484,7 +487,9 @@ class WebsiteDomains:
                 with self.stage("certbot"):
                     try:
                         self.task("issue", domain)
-                    except SiteError:
+                    except SiteError as exc:
+                        if str(exc) == "site_task_timeout":
+                            raise SiteError("certbot_timeout") from None
                         raise SiteError("certbot_failed") from None
                 base = Path(self.env["CERTBOT_CONFIG_DIR"]) / "live" / domain
                 new["domains"].append({"domain": domain, "fullchain": (base / "fullchain.pem").as_posix(), "private_key": (base / "privkey.pem").as_posix()})

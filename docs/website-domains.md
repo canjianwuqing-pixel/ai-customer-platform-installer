@@ -47,7 +47,17 @@ HTTP/HTTPS 的 nonce 验证分别使用 **30 秒总预算**，本机就绪检查
 
 诊断文件是本机运维记录，不属于业务配置备份，恢复备份不导入旧主机的诊断；网站清单、凭据和业务数据继续走原有备份机制。没有新增 `.env` 配置或数据库迁移。测试依赖见 `tests/requirements-browser.txt`，新增 wsproto 仅供本地 WebSocket 协议夹具，不进入生产依赖。
 
-### 此预验证修复的安全更新
+### 显式 Certbot 续签测试与进程回收
+
+备用域名正式证书签发/复用成功后，仍执行 `renew --dry-run`，`CERTBOT_RENEW_DRY_RUN=true` 的默认值不变。该显式验证现在附加 `--no-random-sleep-on-renew`。已核对 [Certbot v1.21.0 参数解析源码](https://github.com/certbot/certbot/blob/v1.21.0/certbot/certbot/_internal/cli/__init__.py)：该版本支持此参数；[同版本 renewal 实现](https://github.com/certbot/certbot/blob/v1.21.0/certbot/certbot/_internal/renewal.py)在非交互续签时默认随机等待 1–480 秒，可能超过维护子任务的 360 秒上限。关闭的只是本次显式测试的随机等待，不是证书校验，也没有关闭自动续签计时器或更改其日常调度策略。
+
+网站维护子命令在生产 POSIX 环境中使用独立 session/process group。超时或调用被 Python 异常中断时，先向该任务组发送 TERM，最多给 3 秒退出宽限；仍存活的组再接收 KILL。即使直接启动的 Bash 已经退出或 stdout 管道关闭，也不会据此认定 Certbot 后代已退出。回收启动器及关闭管道后才报告失败，允许原事务回滚 Nginx；不按进程名执行全局 kill，不终止其他 Certbot/应用进程。360 秒上限保留，清理另有最多 3 秒的优雅退出宽限，强制终止后等待启动器回收再继续，不能先回滚再清理。
+
+真实网络等原因仍可使 dry-run 失败或超时。受保护的服务器端诊断会将超时标为 `failed_stage=certbot`、`error_code=certbot_timeout`，随后记录原有回滚结果，不暴露 Certbot 原始输出、命令或凭据。已经签发的证书、私钥及 renewal 配置保留；失败不会撤销、删除或强制重新签发证书。重试继续使用原 `--keep-until-expiring`，通过全部 HTTP/HTTPS 检查后才正式发布备用域名。
+
+`tests/website_certbot_test.py` 使用隔离的假 Certbot 模拟 368 秒随机等待（缩放为 5 秒）及多层实际子进程，覆盖参数、重复执行、证书保留、失败不跳过验证、超时 TERM/KILL、父进程先退出、其他进程组不受影响，以及回滚前确认无存活后代。进程组用例需要 POSIX Python；Windows 原生 Python 会明确跳过，不能算作通过。没有向真实 CA 发起请求，不代表公网续签已验收。
+
+### 此域名修复的安全更新
 
 先在后台确认没有进行中的维护任务，保存现有备份。待修复提交发布到远程后，在原项目目录以原服务器管理用户操作，工作区不干净或不能快进时停止：
 

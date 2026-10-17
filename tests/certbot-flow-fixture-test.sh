@@ -117,7 +117,7 @@ website_task issue backup.example.test
 website_task issue backup.example.test
 cmp -s -- "${SITE_CONFIG}" "${TEST_TEMP_ROOT}/before-alias.snapshot"
 grep -Eq -- 'certbot .* certonly --webroot .*--cert-name backup.example.test --domains backup.example.test' "${CERTBOT_CALL_LOG}"
-grep -Eq -- 'certbot .* renew --dry-run --cert-name backup.example.test' "${CERTBOT_CALL_LOG}"
+grep -Eq -- 'certbot .* renew --dry-run --no-random-sleep-on-renew --cert-name backup.example.test' "${CERTBOT_CALL_LOG}"
 if CERTBOT_FIXTURE_RENEW_FAILURE=true website_task issue backup.example.test; then
   printf '%s\n' 'Alias issuance ignored renewal validation failure.' >&2; exit 1
 fi
