@@ -170,6 +170,7 @@ class NginxHTTPSFixtures(unittest.TestCase):
         values = {"DOMAIN": self.domain, "NGINX_LISTEN_PORT": str(self.http_port), "DOMAIN_HTTPS_PORT": str(self.https_port),
                   "HTTPS_PORT_SUFFIX": ":" + str(self.https_port),
                   "CERTBOT_FULLCHAIN_PATH": self.certificate.as_posix(), "CERTBOT_PRIVATE_KEY_PATH": key.as_posix(),
+                  "WEBSITE_CERTBOT_WEBROOT": self.directory.as_posix(),
                   "NGINX_CLIENT_MAX_BODY_SIZE": "1m", "NGINX_UPSTREAM_HOST": "127.0.0.1",
                   "CHATWOOT_HTTP_PORT": str(self.backend_port), "NGINX_PROXY_READ_TIMEOUT_SECONDS": "5",
                   "ADMIN_UPSTREAM_HOST": "127.0.0.1", "AI_ADMIN_HTTP_PORT": str(self.backend_port)}

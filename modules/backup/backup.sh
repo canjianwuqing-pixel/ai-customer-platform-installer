@@ -237,6 +237,9 @@ backup_write_configuration_files() {
     "${staging_directory}/nginx" || return 1
 
   backup_copy_protected_file "${CONFIG_FILE}" "${staging_directory}/config/platform.env" || return 1
+  if [[ -f "$(website_registry_path)" ]]; then
+    backup_copy_protected_file "$(website_registry_path)" "${staging_directory}/config/website-domains.json" || return 1
+  fi
   backup_copy_protected_file "${CHATWOOT_COMPOSE_FILE}" "${staging_directory}/compose/chatwoot.compose.yaml" || return 1
   backup_copy_protected_file "${AI_SERVICE_COMPOSE_FILE}" "${staging_directory}/compose/ai-service.compose.yaml" || return 1
   if [[ "${ADMIN_ENABLED:-false}" == true ]]; then

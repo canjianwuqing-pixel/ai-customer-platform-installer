@@ -123,6 +123,8 @@ def management_router(resolver, *, provider=None, bridge=None) -> APIRouter:
     if bridge is not None:
         from .chatwoot_api import management_routes
         router.include_router(management_routes(bridge))
+        from .support_api import support_router
+        router.include_router(support_router(bridge))
     from .knowledge import KnowledgeStore, MAX_CONTENT_BYTES
     knowledge = KnowledgeStore(resolver)
 

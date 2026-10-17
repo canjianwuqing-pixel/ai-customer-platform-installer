@@ -16,6 +16,11 @@ services:
       AI_SYSTEM_PROMPT: "${AI_SYSTEM_PROMPT:-}"
       AI_SERVICE_DATA_PATH: "${AI_SERVICE_DATA_PATH:?AI_SERVICE_DATA_PATH is required}"
       AI_SERVICE_CONTAINER_PORT: "${AI_SERVICE_CONTAINER_PORT:?AI_SERVICE_CONTAINER_PORT is required}"
+      CHATWOOT_LOCAL_ORIGIN: "https://${DOMAIN:?DOMAIN is required}"
+      CHATWOOT_INTERNAL_URL: http://rails:3000
+    networks:
+      - ai-service
+      - chatwoot-runtime
     # Only provider-specific environment variables belong in this optional
     # file. Do not supply the installer's complete .env as an env_file.
     env_file:
@@ -37,3 +42,7 @@ services:
     read_only: true
     tmpfs:
       - /tmp
+networks:
+  chatwoot-runtime:
+    external: true
+    name: "${CHATWOOT_COMPOSE_PROJECT:?CHATWOOT_COMPOSE_PROJECT is required}_chatwoot"

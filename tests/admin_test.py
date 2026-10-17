@@ -171,12 +171,15 @@ class AdminFixtures(unittest.TestCase):
         self.assertEqual(result.status_code, 303)
         self.assertFalse(self.client.get("/admin/api/services/service_a").json()["enabled"])
 
-    def test_domain_page_create_edit_disable_and_invalid_binding(self):
+    def test_legacy_domain_api_preserved_but_not_displayed_as_website_ssl_state(self):
         self.login()
         self.create_service()
         data = {"domain": "entry.example.test", "service_id": "service_a", "enabled": False, "default_entry": False}
         self.assertEqual(self.post("/admin/api/domains", data).status_code, 201)
-        self.assertIn("entry.example.test", self.client.get("/admin/manage/domains").text)
+        page = self.client.get("/admin/manage/domains")
+        self.assertNotIn("entry.example.test", page.text)
+        self.assertIn("SSL 状态", page.text)
+        self.assertEqual(self.client.get("/admin/api/domains/entry.example.test").json(), data)
         self.assertEqual(self.post("/admin/api/domains/entry.example.test", {"service_id": "missing"}, "PATCH").status_code, 409)
         self.create_service("service_b")
         self.assertEqual(self.post("/admin/api/domains/entry.example.test", {"service_id": "service_b"}, "PATCH").status_code, 200)

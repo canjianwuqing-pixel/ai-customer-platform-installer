@@ -11,6 +11,7 @@ import json
 import os
 from pathlib import Path
 import queue
+import secrets
 import shutil
 import subprocess
 import threading
@@ -132,7 +133,15 @@ class SourceProtocolFixtures(unittest.TestCase):
         first_delivery = self.deliver()
         self.tick()
         self.assertEqual(len(self.protocol.sent), 1)
+        bot_id = self.f.bridge.binding("service_a")["bot_id"]
+        before_credentials = dict(self.f.bridge.client(self.f.bridge.binding("service_a")).credentials)
+        backup_url = "https://b-" + secrets.token_hex(4) + ".example.test"
+        self.assertEqual(self.f.api.post("/management/website-origin", json={
+            "old_url": "https://platform.example.test", "new_url": backup_url}).status_code, 200)
+        self.assertEqual(self.f.bridge.binding("service_a")["bot_id"], bot_id)
+        self.assertEqual(self.f.bridge.client(self.f.bridge.binding("service_a")).credentials, before_credentials)
         self.protocol.visitor(content="我要人工客服")
+        self.assertTrue(all(row["url"].startswith(backup_url + "/") for row in self.protocol.callbacks))
         self.deliver()
         self.tick()
         self.protocol.human()

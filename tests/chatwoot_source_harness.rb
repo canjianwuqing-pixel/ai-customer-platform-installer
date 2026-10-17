@@ -88,7 +88,13 @@ class Bot < Actor
   attr_reader :outgoing_url, :secret
   def initialize(row)
     super(row.fetch('id'), 'agent_bot')
+    refresh(row)
+  end
+  # A new Rails request loads current persisted bot attributes. Keep fixture
+  # associations referencing that same identity when an API PATCH changes URL.
+  def refresh(row)
     @outgoing_url, @secret = row.fetch('outgoing_url'), row.fetch('secret')
+    self
   end
 end
 class AgentBot
@@ -234,7 +240,10 @@ STDIN.each_line do |line|
   $deliveries = []
   begin
     command = JSON.parse(line)
-    command.fetch('bots', {}).each_value { |row| $bots[row.fetch('id')] = Bot.new(row) }
+    command.fetch('bots', {}).each_value do |row|
+      id = row.fetch('id')
+      $bots[id] = $bots[id] ? $bots[id].refresh(row) : Bot.new(row)
+    end
     cid = command.fetch('cid', 100)
     if command['op'] == 'visitor' && !$conversations.key?(cid)
       $conversations[cid] = FixtureConversation.new(cid, FixtureInbox.new(command.fetch('inbox', 7), $bots.fetch(command.fetch('bot'))))

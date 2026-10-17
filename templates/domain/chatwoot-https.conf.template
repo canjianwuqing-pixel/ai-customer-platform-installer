@@ -11,7 +11,12 @@ server {
     server_name {{DOMAIN}};
     underscores_in_headers on;
 
-    return 301 https://$host{{HTTPS_PORT_SUFFIX}}$request_uri;
+    location ^~ /.well-known/acme-challenge/ {
+        root {{WEBSITE_CERTBOT_WEBROOT}};
+        default_type text/plain;
+        try_files $uri =404;
+    }
+    location / { return 301 https://$host{{HTTPS_PORT_SUFFIX}}$request_uri; }
 }
 
 server {

@@ -1,0 +1,14 @@
+# Managed by AI Customer Platform Installer. Temporary HTTP-01 staging only.
+server {
+    listen {{NGINX_LISTEN_PORT}};
+    listen [::]:{{NGINX_LISTEN_PORT}};
+    server_name {{DOMAIN}};
+    underscores_in_headers on;
+    location = /.__platform-domain-check { return 200 "{{NONCE}}"; }
+    location ^~ /.well-known/acme-challenge/ {
+        root {{CERTBOT_WEBROOT}};
+        default_type text/plain;
+        try_files $uri =404;
+    }
+    location / { return 404; }
+}

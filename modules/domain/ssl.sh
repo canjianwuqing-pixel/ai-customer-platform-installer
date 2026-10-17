@@ -140,6 +140,7 @@ domain_render_https_template() {
     -e "s|{{NGINX_PROXY_READ_TIMEOUT_SECONDS}}|${NGINX_PROXY_READ_TIMEOUT_SECONDS}|g" \
     -e "s|{{CERTBOT_FULLCHAIN_PATH}}|${CERTBOT_FULLCHAIN_PATH}|g" \
     -e "s|{{CERTBOT_PRIVATE_KEY_PATH}}|${CERTBOT_PRIVATE_KEY_PATH}|g" \
+    -e "s|{{WEBSITE_CERTBOT_WEBROOT}}|${WEBSITE_CERTBOT_WEBROOT:-${CERTBOT_WORK_DIR}/platform-webroot}|g" \
     "${DOMAIN_HTTPS_TEMPLATE_FILE}" >"${output_file}"; then
     log_error "Failed to render the HTTPS Nginx template."
     return 1
@@ -154,6 +155,11 @@ domain_render_https_template() {
 
 domain_activate_https() {
   local candidate_file
+
+  if declare -F website_reconcile >/dev/null && [[ -f "$(website_registry_path)" ]]; then
+    website_reconcile
+    return
+  fi
 
   candidate_file="$(mktemp)"
   if ! domain_render_https_template "${candidate_file}"; then

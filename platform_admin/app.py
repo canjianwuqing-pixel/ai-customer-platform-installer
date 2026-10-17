@@ -41,7 +41,7 @@ def origin_tuple(value):
         return None
 
 
-def create_app(env=None, management=None, maintenance=None):
+def create_app(env=None, management=None, maintenance=None, *, widget_transport=None):
     env = dict(os.environ if env is None else env)
     auth = AuthStore(env)
     management = management or InternalClient(env.get("ADMIN_API_URL", "http://ai-service:8000"), env.get("SERVICE_MANAGEMENT_TOKEN", ""))
@@ -119,6 +119,10 @@ def create_app(env=None, management=None, maintenance=None):
         # Keep the origin for our forms, but send no Referer across origins.
         response.headers.update({"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff",
             "Referrer-Policy": "same-origin", "Content-Security-Policy": "default-src 'none'; style-src 'self' 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'"})
+        if request.url.path.startswith("/support/"):
+            response.headers["Content-Security-Policy"] = ("default-src 'self'; script-src 'self' 'unsafe-inline'; "
+                "style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; media-src 'self' blob:; "
+                "connect-src 'self' wss:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'")
         if request.url.path in {"/admin/manage/knowledge", "/admin/knowledge"} or request.url.path.startswith("/admin/edit/ai/"):
             response.headers["Content-Security-Policy"] += "; script-src 'self'"
         if request.url.path.startswith("/admin/edit/ai/"):
@@ -396,6 +400,8 @@ def create_app(env=None, management=None, maintenance=None):
     @app.get("/admin/manage/{kind}")
     async def list_page(kind: str, request: Request):
         _, csrf = session(request)
+        if kind == "domains":
+            return await website_page(csrf, notice="配置已保存（历史路由 API 兼容操作）。" if request.query_params.get("saved") == "1" else "")
         if kind == "knowledge":
             return await knowledge_page(csrf, request.query_params.get("service_id", ""),
                                         saved=request.query_params.get("saved") == "1")
@@ -523,5 +529,8 @@ def create_app(env=None, management=None, maintenance=None):
             return JSONResponse(result, status_code=202)
         return RedirectResponse("/admin/maintenance", status_code=303)
 
+    from .website import routes
+    website_page = routes(app, env=env, session=session, mutation=mutation, page=page,
+        management=management, maintenance=maintenance, ensure_public=ensure_public, widget_transport=widget_transport)
     app.state.auth = auth
     return app

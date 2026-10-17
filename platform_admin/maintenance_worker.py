@@ -8,6 +8,7 @@ Admin container stop during the existing backup/restore/upgrade workflows.
 from http.server import BaseHTTPRequestHandler
 from contextlib import contextmanager
 import hmac
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -57,6 +58,15 @@ class Runner:
             connection.close()
 
     def command(self, operation, version="", *, listing=False):
+        if operation in {"domain-add", "domain-primary", "domain-delete"}:
+            from .site_domains import hostname, SiteError
+            try:
+                hostname(version)
+            except SiteError:
+                raise MaintenanceError("invalid_domain") from None
+            if listing:
+                raise MaintenanceError("operation_not_allowed")
+            return ["/bin/bash", str(self.root / "install.sh"), "__website-domains", operation[7:], version]
         if operation not in {"backup", "restore", "upgrade", "rollback"}:
             raise MaintenanceError("operation_not_allowed")
         if listing:
@@ -92,6 +102,21 @@ class Runner:
             return sorted({word for word in text.split() if VERSION.fullmatch(word)}, reverse=True)[:100]
         except (OSError, subprocess.SubprocessError):
             return []
+
+    def websites(self):
+        try:
+            result = self.run(["/bin/bash", str(self.root / "install.sh"), "__website-domains", "state"], listing=True)
+            if result.returncode or len(result.stdout) > 65536:
+                raise ValueError
+            value = json.loads(result.stdout)
+            from .site_domains import hostname
+            for row in value["domains"]:
+                hostname(row["domain"])
+                if set(row) != {"domain", "primary", "ssl_status", "expires"}:
+                    raise ValueError
+            return value
+        except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
+            raise MaintenanceError("website_state_unavailable") from None
 
     def state(self):
         with self.db() as db:
@@ -163,6 +188,8 @@ def make_handler(runner, token):
                 self.connection.settimeout(10)
                 if self.command == "GET" and self.path == "/state":
                     result = runner.state()
+                elif self.command == "GET" and self.path == "/website-domains":
+                    result = runner.websites()
                 elif self.command == "POST" and self.path == "/jobs":
                     length = int(self.headers.get("Content-Length", "0"))
                     if not 0 < length <= 4096:
@@ -193,6 +220,10 @@ def main():
     lock_file = (socket_dir / "worker.lock").open("a")
     fcntl.flock(lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
     runner = Runner(os.environ["INSTALLER_ROOT"], os.environ["CONFIG_FILE"], os.environ["ADMIN_MAINTENANCE_STATE_DIR"])
+    if runner.run(["/bin/bash", str(runner.root / "install.sh"), "__website-domains", "recover"]).returncode:
+        raise MaintenanceError("website_recovery_required")
+    from .site_domains import atomic
+    atomic(runner.state_dir / "worker.version", hashlib.sha256(Path(__file__).read_bytes()).hexdigest().encode())
     socket_path = socket_dir / "worker.sock"
     if socket_path.exists():
         import stat

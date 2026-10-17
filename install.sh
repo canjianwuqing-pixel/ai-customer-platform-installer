@@ -42,6 +42,7 @@ readonly -a MODULE_FILES=(
   "modules/domain/configure.sh"
   "modules/domain/ssl.sh"
   "modules/domain/verify.sh"
+  "modules/domain/websites.sh"
   "modules/backup/check.sh"
   "modules/backup/backup.sh"
   "modules/backup/restore.sh"
@@ -221,6 +222,13 @@ main() {
   if [[ "${command_name}" == __prepare-configuration ]]; then
     config_prepare_candidate "$2" "$3"
     return 0
+  fi
+
+  if [[ "${command_name}" == __website-domains || "${command_name}" == __website-task ]]; then
+    config_load_installer_configuration "${CONFIG_FILE:-${INSTALLER_ROOT}/.env}" >/dev/null
+    if [[ "${command_name}" == __website-domains ]]; then website_domains "${@:2}"
+    else website_task "${@:2}"; fi
+    return
   fi
 
   log_info "AI customer platform installer started."

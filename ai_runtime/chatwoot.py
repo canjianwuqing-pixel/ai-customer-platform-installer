@@ -144,6 +144,17 @@ class ChatwootBridge:
         credentials = self.vault.get("chatwoot", binding["service_id"])
         if not isinstance(credentials, dict):
             raise RuntimeFailure("chatwoot_not_configured", 409)
+        # The platform's own Rails is reached over the private Docker network,
+        # not through a possibly failed public primary DNS name. External
+        # Chatwoot connections keep their explicitly configured URL.
+        local = {self.resolver.env.get("CHATWOOT_LOCAL_ORIGIN", "")}
+        with self.store._connection() as db:
+            if self._ready(db):
+                row = db.execute("SELECT config FROM runtime_profiles WHERE kind='website-origin' AND key='local'").fetchone()
+                if row:
+                    local = set(json.loads(row[0]))
+        if binding["base_url"] in local and self.resolver.env.get("CHATWOOT_INTERNAL_URL"):
+            binding = {**binding, "base_url": server_url(self.resolver.env["CHATWOOT_INTERNAL_URL"])}
         return ChatwootClient(binding, credentials, self.transport)
 
     def state(self, service_id):

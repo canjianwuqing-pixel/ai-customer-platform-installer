@@ -4,7 +4,7 @@
 
 ## 当前阶段
 
-当前仓库已经实现单域名 HTTPS 部署所需的基础模块，包括：
+当前仓库支持主/备用网站域名、HTTPS 和独立在线客服入口，包括：
 
 - 安装入口和模块注册机制；
 - 统一日志、配置读取、状态记录和基础校验接口；
@@ -17,7 +17,8 @@
 - 带版本、校验和、保留策略及显式恢复确认的本地备份与恢复；
 - 带升级前备份、版本记录、健康检查和失败自动恢复的安全升级与回滚；
 - Chatwoot 的 Nginx HTTP 反向代理与 WebSocket 支持；
-- 单域名 DNS 检测、Let's Encrypt 证书申请和 HTTPS 切换；
+- 主/备用网站域名管理、DNS 到达检测、独立 Let's Encrypt 证书和安全 HTTPS 切换；
+- 统一后台的网站域名与 SSL 管理、主域名切换，以及原生 Chatwoot `/support/` 全屏入口；
 - Certbot 自动续签、Nginx deploy hook 和续签 dry-run；
 - 配置模板、fixture 测试和文档目录。
 
@@ -25,15 +26,17 @@
 
 ## 配置原则
 
+网站备用域名、主域名故障切换和独立在线客服入口见 [网站多域名与 /support/ 使用及验收说明](docs/website-domains.md)。新“域名管理”页面管理整个平台站点和证书；历史域名→实例绑定数据及 API 继续兼容。
+
 真实配置统一保存在本地 `.env` 文件中。首次执行 `bash install.sh` 时，安装向导会自动从 `.env.example` 创建权限为 `0600` 的 `.env`。普通安装只询问网站域名和管理员邮箱，不需要填写镜像、版本、密码、Token、OpenAI API Key 或模型名称。
 
 安装器按 `config/default.env`、`config/images.env`、`.env` 的顺序加载配置，后加载的用户配置优先。`config/images.env` 提供 Chatwoot、PostgreSQL 和 Redis 的固定版本，禁止使用 `latest`；`config/default.env` 保存非敏感运行参数。高级用户可以在 `.env` 中覆盖版本和镜像设置。
 
 `DATABASE_PASSWORD`、`REDIS_PASSWORD`、`SECRET_KEY_BASE`、`AI_SERVICE_INTERNAL_TOKEN` 和 `SERVICE_MANAGEMENT_TOKEN` 可以留空；安装器首次运行时自动生成安全随机值，重复执行保留已有值，并将 `.env` 权限限制为 `0600`。统一后台账号固定为 `admin`，使用 `ADMIN_PASSWORD=admin` 作为公开出厂初始密码，`ADMIN_SESSION_SECRET` 仍安全随机生成。旧 `AI_ADMIN_*` 凭据只用于迁移同一个账号；旧 `ADMIN_PASSWORD_HASH` 仅为升级兼容输入，不再为新安装生成。除公开出厂值外，不得向 Git 提交真实域名、邮箱、密码、密钥、证书或 Token。
 
-`DOMAIN` 是当前唯一部署域名；`LETSENCRYPT_EMAIL` 用于 Let's Encrypt 账户和证书通知，`EMAIL` 继续作为 Chatwoot 的业务发件地址。V1 固定使用 Let's Encrypt HTTP-01 验证，因此域名必须能通过公共 DNS 解析到部署入口，公网 TCP 80 端口必须可达。
+`DOMAIN` 是当前主域名，备用网站域名由后台管理并单独持久化；`LETSENCRYPT_EMAIL` 用于 Let's Encrypt 账户和证书通知，`EMAIL` 继续作为 Chatwoot 的业务发件地址。使用 Let's Encrypt HTTP-01 验证，所有域名的公共 DNS 记录必须到达部署入口，公网 TCP 80 / 443 必须可达。
 
-`modules/domain/providers/` 和 `modules/domain/dns-providers/` 已作为后续扩展边界保留。当前不会读取 Cloudflare 凭据，也不实现 DNS-01、多域名或泛域名证书。
+`modules/domain/providers/` 和 `modules/domain/dns-providers/` 保留扩展边界。当前已支持多个网站域名及独立证书；不读取 Cloudflare 凭据，不实现 DNS-01 或泛域名证书。
 
 Chatwoot、pgvector/PostgreSQL 和 Redis 镜像均通过 `.env` 使用明确版本标签。PostgreSQL 与 Redis 不发布宿主机端口；Rails 默认只绑定到 `.env` 配置的本地地址，后续由 Nginx 模块接入。
 
@@ -83,7 +86,7 @@ TEST_JOBS=4 bash tests/run-all.sh
 
 `modules/admin/` 管理部署与健康检查；`stacks/admin/compose.yaml` 是现有 AI Stack 的覆盖文件，**替换原 `ai-admin` 服务，而不是再创建一个后台**。保留其内部服务名和 `ai_admin_data` 卷，兼容 `manage.sh`、备份、升级与回滚。`AI_ADMIN_IMAGE` 现在是这个唯一管理组件的镜像版本，不表示第二个后台；旧外部后台镜像不再与统一后台同时启动。常用运维命令不变，无需进入子目录。
 
-页面使用中文、响应式的服务端可视化表单，不需要手写 JSON，不引入前端框架。知识库页面仅使用同源静态脚本保护未保存草稿和确认清空，不在浏览器保存正文或内部 Token。可以查看、创建、编辑、启用/停用客服实例；管理域名绑定；管理 AI 模型、系统提示词、回复规则、Runtime 默认实例、知识库与渠道配置引用。域名页只修改绑定数据，不修改 DNS 或申请证书；知识库不提供文件上传/向量索引，渠道页不建立外部平台连接。
+页面使用中文、响应式的服务端可视化表单，不需要手写 JSON，不引入前端框架。知识库页面使用同源静态脚本保护未保存草稿和确认清空，不在浏览器保存正文或内部 Token。可以管理客服实例、网站主/备用域名及 SSL、AI 模型、系统提示词、回复规则、Runtime 默认实例、知识库与渠道配置引用。DNS 记录仍由域名持有人配置；网站证书通过权限受限维护执行器申请。历史域名绑定 API 保留，但不再作为网站域名页。知识库不提供文件上传/向量索引，渠道页不建立外部平台连接。
 
 普通表单沿用已有 profile API；密钥和 Chatwoot 接入使用独立的受认证接口，不将敏感字段加入普通配置响应：
 
@@ -215,7 +218,7 @@ profile API 采用与现有配置相同的 SQLite 覆盖方式，不重写 YAML�
 
 任务串行执行，状态写入 `ADMIN_MAINTENANCE_STATE_DIR`，容器停机/重建不会中断宿主机任务。恢复/升级时后台可能暂时不可达，稍后重新登录查看结果；后台只显示状态、版本 ID，不显示脚本日志。进程意外重启会标记未完成任务为 `interrupted`，不会自动重试破坏性操作，需操作者检查服务器。CLI 运维期间请勿并行提交后台任务。执行器安装时不强制重启已有服务，代码更新请在确认无维护任务时手动重启配置指定的 systemd unit。
 
-统一后台与 Runtime 覆盖 Compose 文件、管理员配置数据库、Session 数据、API 配置均随已有备份保存/恢复；维护任务账本留在宿主机，不回滚任务历史。旧备份格式仍可读取。不开启定时任务、云存储、多管理员、角色权限、多租户或统计报表。未来在同一入口扩展多 AI、多渠道、多域名、多知识库与多平台。
+统一后台与 Runtime 覆盖 Compose 文件、管理员配置数据库、Session 数据、API 配置均随已有备份保存/恢复；网站清单单独纳入备份，证书私钥不入包，恢复前校验目标环境；维护任务账本留在宿主机，不回滚任务历史。旧备份格式仍可读取。不新增自动备份任务、云存储、多管理员、角色权限、多租户或统计报表。Certbot 续签仍使用现有定时器。
 
 测试：
 
@@ -424,9 +427,9 @@ bash install.sh
 - 多消息入口和多知识库绑定；
 - 多外部客服平台连接；
 - 多客服渠道连接；
-- 多域名入口；
+- 更丰富的统一入口管理；
 - Cloudflare DNS API、DNS-01 自动验证与泛域名证书；
 - 云备份、异地复制和自动调度；
 - 更细粒度的组件升级路径和运维工具。
 
-当前已实现多客服实例的配置与 AI Runtime 路由；多平台连接、多租户权限、多域名部署和自动化入口管理继续作为后续阶段。
+当前已实现多客服实例的配置与 AI Runtime 路由、多网站域名与 SSL 管理及独立 `/support/` 入口；多平台连接和多租户权限继续作为后续阶段。

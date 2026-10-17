@@ -23,6 +23,10 @@ trap cleanup EXIT
 
 cp -- "${TEST_ROOT}/tests/fixtures/chatwoot.test.env" "${TEST_ENV}"
 printf 'BACKUP_DIR=%s\nBACKUP_RETENTION=1\n' "${TEST_TEMP_ROOT}/backups" >>"${TEST_ENV}"
+printf 'ADMIN_MAINTENANCE_STATE_DIR=%s\n' "${TEST_TEMP_ROOT}/maintenance" >>"${TEST_ENV}"
+mkdir -p -- "${TEST_TEMP_ROOT}/maintenance"
+chmod 0700 "${TEST_TEMP_ROOT}/maintenance"
+printf '%s\n' '{"version":1,"primary":"primary.example.test","domains":[{"domain":"primary.example.test","fullchain":"/fixture/cert.pem","private_key":"/fixture/key.pem"}]}' >"${TEST_TEMP_ROOT}/maintenance/website-domains.json"
 
 export PATH="${TEST_ROOT}/tests/fixtures/docker-ready/bin:${PATH}"
 export CONFIG_FILE="${TEST_ENV}"
@@ -63,6 +67,7 @@ for artifact in \
   data/ai-admin-data.tar \
   config/platform.env \
   config/ssl-record.env \
+  config/website-domains.json \
   compose/chatwoot.compose.yaml \
   compose/ai-service.compose.yaml \
   nginx/site.conf; do
@@ -71,6 +76,8 @@ for artifact in \
     exit 1
   fi
 done
+cmp -- "${TEST_TEMP_ROOT}/maintenance/website-domains.json" "${backup_path}/config/website-domains.json"
+grep -Fq 'config/website-domains.json' "${backup_path}/SHA256SUMS"
 
 if ! grep -Fq 'AI_DATA_COVERAGE=database,knowledge-base,application-data' \
   "${backup_path}/manifest.env"; then

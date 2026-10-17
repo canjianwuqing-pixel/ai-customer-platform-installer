@@ -33,4 +33,10 @@ assert any(volume.get("source") == "ai_service_data" and volume.get("target") ==
 assert any(volume.get("target") == "/app/config/services" and volume.get("read_only") for volume in runtime["volumes"])
 assert any(volume.get("target") == "/run/platform-health/readiness.py" and volume.get("read_only")
            and Path(volume["source"]) == root / "modules/admin/readiness.py" for volume in admin["volumes"])
+assert admin["environment"]["ADMIN_CHATWOOT_URL"] == "http://rails:3000"
+assert {"ai-service", "chatwoot-website"} == set(admin["networks"])
+assert config["networks"]["chatwoot-website"]["external"]
+assert runtime["environment"]["CHATWOOT_INTERNAL_URL"] == "http://rails:3000"
+assert {"ai-service", "chatwoot-runtime"} == set(runtime["networks"])
+assert config["networks"]["chatwoot-runtime"]["external"]
 print("Real Compose validation passed: one Admin, direct password configuration, restricted mounts and health check.")

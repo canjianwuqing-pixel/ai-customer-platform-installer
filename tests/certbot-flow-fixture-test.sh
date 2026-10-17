@@ -111,4 +111,24 @@ if [[ -z "${certonly_line}" || -z "${renew_line}" ]] || ((certonly_line >= renew
   exit 1
 fi
 
-printf '%s\n' 'Certbot flow fixture test passed.'
+source "${TEST_ROOT}/modules/domain/websites.sh"
+cp -- "${SITE_CONFIG}" "${TEST_TEMP_ROOT}/before-alias.snapshot"
+website_task issue backup.example.test
+website_task issue backup.example.test
+cmp -s -- "${SITE_CONFIG}" "${TEST_TEMP_ROOT}/before-alias.snapshot"
+grep -Eq -- 'certbot .* certonly --webroot .*--cert-name backup.example.test --domains backup.example.test' "${CERTBOT_CALL_LOG}"
+grep -Eq -- 'certbot .* renew --dry-run --cert-name backup.example.test' "${CERTBOT_CALL_LOG}"
+if CERTBOT_FIXTURE_RENEW_FAILURE=true website_task issue backup.example.test; then
+  printf '%s\n' 'Alias issuance ignored renewal validation failure.' >&2; exit 1
+fi
+cmp -s -- "${SITE_CONFIG}" "${TEST_TEMP_ROOT}/before-alias.snapshot"
+ADMIN_MAINTENANCE_STATE_DIR="${TEST_TEMP_ROOT}/maintenance"
+mkdir -p -- "${ADMIN_MAINTENANCE_STATE_DIR}"
+printf '%s\n' '{"version":1,"primary":"chatwoot.example.test","domains":[]}' >"$(website_registry_path)"
+# Verify the installer dispatches persisted registries to the multi-domain
+# renderer instead of replacing them with the legacy single-domain template.
+website_domains() { printf '%s\n' "$*" >>"${TEST_TEMP_ROOT}/reconcile.log"; }
+domain_activate_https
+grep -Fxq reconcile "${TEST_TEMP_ROOT}/reconcile.log"
+cmp -s -- "${SITE_CONFIG}" "${TEST_TEMP_ROOT}/before-alias.snapshot"
+printf '%s\n' 'Certbot single/alias webroot, repeat issuance and renewal failure fixtures passed.'

@@ -1,0 +1,6 @@
+{% extends "base.html" %}{% block content %}
+<h2>在线客服入口</h2><p class="hint">此设置仅选择所有网站 /support/ 使用的收件箱，不改变客服实例、模型或知识库配置。所有已启用域名均可访问同源的 /support/。</p>
+{% if saved %}<p class="notice success" role="status">默认在线客服收件箱已保存。</p>{% endif %}
+{% if error %}<p class="notice error" role="alert">{{ error }}</p>{% endif %}
+<form method="post"><input type="hidden" name="csrf" value="{{ csrf }}"><label for="support-inbox">默认在线客服收件箱（必选）</label><select id="support-inbox" name="service_id" required><option value="">请选择网站收件箱</option>{% for row in state.options %}<option value="{{ row.service_id }}" {% if row.service_id == state.selected or (not state.selected and state.options|length == 1) %}selected{% endif %}>{{ row.name }} · {{ row.inbox_name }}</option>{% endfor %}</select><p class="hint">只有一个有效网站绑定时自动作为候选；多个绑定必须明确选择。先在 Chatwoot 接入页完成现有网站收件箱绑定。</p><div class="form-actions"><button>保存默认入口</button><a class="button secondary" href="/support/" target="_blank" rel="noopener">打开在线客服</a></div></form>
+{% endblock %}

@@ -33,6 +33,22 @@ admin_install_worker() {
   run_as_root systemctl daemon-reload || return 1
   # Do not restart a worker that may be executing a backup or upgrade.
   run_as_root systemctl enable --now "${ADMIN_MAINTENANCE_UNIT}" || return 1
+  # An old process keeps the old Python allow-list even though files changed.
+  # A separate fixed one-shot waits for any in-flight upgrade/restore to finish;
+  # it never interrupts the very maintenance job that installed this version.
+  local worker_version="${ADMIN_MAINTENANCE_STATE_DIR}/worker.version"
+  local expected_version; expected_version="$(sha256sum "${INSTALLER_ROOT}/platform_admin/maintenance_worker.py" 2>/dev/null | cut -d ' ' -f1)" || expected_version=""
+  if command_exists systemd-run && [[ -n "${expected_version}" ]] &&
+    run_as_root test -f "${ADMIN_MAINTENANCE_STATE_DIR}/jobs.sqlite3" &&
+    ! run_as_root grep -Fxq "${expected_version}" "${worker_version}" 2>/dev/null &&
+    ! run_as_root systemctl is-active --quiet "${ADMIN_MAINTENANCE_UNIT%.service}-refresh.service"; then
+    run_as_root systemd-run --collect --unit="${ADMIN_MAINTENANCE_UNIT%.service}-refresh" \
+      --property=Type=exec --property=StandardOutput=null --property=StandardError=null \
+      /usr/bin/python3 "${INSTALLER_ROOT}/platform_admin/worker_refresh.py" \
+      "${ADMIN_MAINTENANCE_STATE_DIR}/jobs.sqlite3" "${ADMIN_MAINTENANCE_UNIT}" >/dev/null || {
+        log_error 'Could not schedule the idle-only maintenance executor refresh.'; return 1;
+      }
+  fi
 }
 
 admin_install() {

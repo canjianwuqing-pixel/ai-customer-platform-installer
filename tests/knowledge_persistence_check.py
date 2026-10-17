@@ -46,12 +46,14 @@ with TestClient(application, headers={"authorization": "Bearer " + env["SERVICE_
             assert api.put("/management/chatwoot/" + service_id + "/connection", json={"base_url": "https://chatwoot.example.test", "account_id": 42, "api_token": protocol.token}).status_code == 200
             assert api.post("/management/chatwoot/" + service_id + "/bind", json={"inbox_id": inbox, "public_url": "https://platform.example.test"}).status_code == 200
         bridge = application.state.chatwoot
+        assert api.put("/management/support-entry", json={"service_id": "service_a"}).status_code == 200
         bridge.pause("service_a", 100, "visitor_requested_human")
         bridge.lifecycle("service_a", {"id": 100, "status": "resolved", "updated_at": time.time(), "messages": [{"id": 20}]})
         bridge.pause("service_b", 200)
         with bridge.store._connection(write=True) as db:
             db.execute("INSERT INTO chatwoot_events(service_id,conversation_id,message_id,status,created_at) VALUES ('service_a',100,19,'sent',?)", (time.time(),))
     elif mode == "mutate":
+        assert api.put("/management/support-entry", json={"service_id": "service_b"}).status_code == 200
         for key in expected:
             base = "/management/services/" + key + "/knowledge"
             revision = api.get(base).json()["revision"]
@@ -63,6 +65,10 @@ with TestClient(application, headers={"authorization": "Bearer " + env["SERVICE_
         base = "/management/services/service_empty/knowledge"
         assert api.put(base, json={"content": "备份后才创建的正文", "revision": api.get(base).json()["revision"]}).status_code == 200
     elif mode == "verify":
+        # Read the saved choice without calling remote Chatwoot in a fresh
+        # process; the choice is in the existing backed-up Runtime volume.
+        from ai_runtime.support_api import SupportEntry
+        assert SupportEntry(application.state.chatwoot).selected() == "service_a"
         for key, content in expected.items():
             result = api.get("/management/services/" + key + "/knowledge")
             assert result.status_code == 200

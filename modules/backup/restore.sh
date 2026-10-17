@@ -221,6 +221,12 @@ backup_restore_nginx_configuration() {
 
   log_info "[restore] Validating and restoring the managed Nginx site."
   nginx_initialize_config
+  if [[ -f "${backup_directory}/config/website-domains.json" ]]; then
+    WEBSITE_DEFER_PRIMARY=true website_domains restore "${backup_directory}/config/website-domains.json"
+    return
+  fi
+  # Old backups cannot silently discard newer website aliases.
+  if [[ -f "$(website_registry_path)" ]]; then WEBSITE_DEFER_PRIMARY=true website_reconcile; return; fi
   nginx_apply_candidate "${backup_directory}/nginx/site.conf"
 }
 
@@ -299,6 +305,13 @@ backup_restore() {
     rm -f -- "${prepared}"; return 1
   fi
   if ! backup_confirm_restore "${backup_id}" "${confirmed}"; then rm -f -- "${prepared}"; return 1; fi
+  if [[ -f "${backup_directory}/config/website-domains.json" ]]; then
+    # Confirmed, but before stopping services or restoring databases. Keys are
+    # deliberately absent from backups; fail without changing active services.
+    website_domains restore-check "${backup_directory}/config/website-domains.json" || { rm -f -- "${prepared}"; return 1; }
+  elif [[ -f "$(website_registry_path)" ]]; then
+    website_domains restore-check "$(website_registry_path)" || { rm -f -- "${prepared}"; return 1; }
+  fi
   config_load_installer_configuration "${prepared}" || { rm -f -- "${prepared}"; return 1; }
   if { backup_contains_ai "${backup_directory}" && ! config_ai_enabled; } ||
     { ! backup_contains_ai "${backup_directory}" && config_ai_enabled; }; then
@@ -351,6 +364,10 @@ backup_restore() {
   fi
   backup_restore_nginx_configuration "${backup_directory}" || return 1
   backup_start_restored_services || return 1
+  # Dependencies must be running before an old backup's primary can be
+  # reconciled with a newer, still reachable website registry.
+  website_reconcile || return 1
+  config_load_installer_configuration "${CONFIG_FILE}" || return 1
   backup_verify_restored_services || return 1
 
   log_ok "[restore] Backup ${backup_id} was restored successfully."

@@ -21,6 +21,10 @@ services:
       SERVICE_MANAGEMENT_TOKEN: "${SERVICE_MANAGEMENT_TOKEN:?SERVICE_MANAGEMENT_TOKEN is required}"
       ADMIN_MAINTENANCE_TOKEN: "${ADMIN_MAINTENANCE_TOKEN:?ADMIN_MAINTENANCE_TOKEN is required}"
       ADMIN_MAINTENANCE_SOCKET: /run/platform-maintenance/worker.sock
+      ADMIN_CHATWOOT_URL: http://rails:3000
+    networks:
+      - ai-service
+      - chatwoot-website
     volumes:
       # Host probe also works with older Admin images that lack /ready.
       - type: bind
@@ -44,3 +48,7 @@ services:
       timeout: 10s
       retries: 3
       start_period: 20s
+networks:
+  chatwoot-website:
+    external: true
+    name: "${CHATWOOT_COMPOSE_PROJECT:?CHATWOOT_COMPOSE_PROJECT is required}_chatwoot"

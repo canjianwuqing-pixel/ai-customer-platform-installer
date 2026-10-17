@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+website_registry_path() { printf '%s/website-domains.json\n' "${ADMIN_MAINTENANCE_STATE_DIR:-/var/lib/ai-customer-platform/maintenance}"; }
 set -Eeuo pipefail
 
 log_message() {
