@@ -120,6 +120,8 @@ def create_app(env=None, management=None, maintenance=None, *, widget_transport=
         response.headers.update({"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff",
             "Referrer-Policy": "same-origin", "Content-Security-Policy": "default-src 'none'; style-src 'self' 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'"})
         if request.url.path.startswith("/support/"):
+            # support.js initializes regenerator and the supported i18n AST/JIT
+            # mode before v4.18 modules load. Keep unsafe-eval forbidden here.
             response.headers["Content-Security-Policy"] = ("default-src 'self'; script-src 'self' 'unsafe-inline'; "
                 "style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; media-src 'self' blob:; "
                 "connect-src 'self' wss:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'")

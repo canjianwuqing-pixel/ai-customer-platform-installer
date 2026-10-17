@@ -34,6 +34,8 @@ class SupportBrowserFixtures(unittest.TestCase):
 
         @app.get("/vite/assets/widget.js")
         def module():
+            if getattr(self, "widget_module", None):
+                return Response(self.widget_module, media_type="text/javascript")
             # Run the unmodified upstream builders. They read location.search
             # and therefore reproduce the previous HTML-200/messages-404 bug.
             return Response('''import endpoints from '/contract/api/endPoints';
@@ -94,6 +96,9 @@ class SupportBrowserFixtures(unittest.TestCase):
             rows = [{"content": row["content"]} for row in self.f.protocol.messages.get(cid, [])]
             return {"payload": rows, "messages": rows}
 
+        customize_app = getattr(self, "customize_app", None)
+        if customize_app:
+            customize_app(app)
         with patch("platform_admin.app.create_app", return_value=app):
             self.driver.setUp()
         self.support.expected_host = self.driver.domain + ":" + str(self.driver.https_port)

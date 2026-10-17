@@ -50,6 +50,8 @@
 
 自动化使用真实 Chromium、Nginx/TLS、固定 v4.18 上游 Widget URL 构造函数，以及有明确标识的 Widget HTTP/页面协议替身；覆盖后台 CRUD、两 Inbox 的发送/历史/会话 Cookie、默认与错误路由、AI 知识隔离及安装备份恢复。它**不是**完整 Chatwoot 前端/真实 OpenAI/生产服务器端到端验收，真实编译资源、WebSocket、AI 回答和手机键盘仍须在 Ubuntu 上按上述步骤验收。
 
+`/support/` 保持禁止 `unsafe-eval`。同步启动脚本会在 v4.18 模块执行前预声明 regenerator 全局绑定，并启用 vue-i18n 9.14.5 官方 AST/JIT 消息解释模式，避免旧 utils 的 Function 回退及默认翻译编译器造成白屏；不改写 Chatwoot 编译资源或翻译内容。Admin CSP 不变。新增实际 Vue/i18n/utils 依赖的浏览器回归，构建步骤见 [CSP 测试说明](../tests/fixtures/widget-csp/README.md)。
+
 ## 本次变更文件
 
 - `ai_runtime/chatwoot.py`：规范化 Chatwoot 来源，account/inbox 歧义与 Webhook/队列校验。

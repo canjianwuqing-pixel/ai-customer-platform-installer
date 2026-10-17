@@ -1,5 +1,18 @@
 /* Native Chatwoot top-level mode: no SDK, frame, hidden buttons or chat code. */
 (() => {
+  // @chatwoot/utils 0.0.57 (v4.18.0's locked dependency) assigns this global
+  // from an ES module. If the binding is absent, its strict-mode assignment
+  // throws and utils.esm.js:881 falls back to Function(...), violating CSP.
+  // Create only the writable binding before modules run; the upstream bundle
+  // installs the ACTUAL runtime. Preserve existing runtimes and keep eval off.
+  if (!('regeneratorRuntime' in window)) window.regeneratorRuntime = undefined;
+  // v4.18's vue-i18n 9.14.5 also defaults to Function-based message compilation.
+  // Its bundled, supported AST/JIT interpreter avoids dynamic JavaScript.
+  // Set the runtime feature flag before dependency initialization, without
+  // changing locale strings, Chatwoot assets or any server-side configuration.
+  if (typeof window.__INTLIFY_JIT_COMPILATION__ !== 'boolean') {
+    window.__INTLIFY_JIT_COMPILATION__ = true;
+  }
   const token = window.chatwootWebChannel && window.chatwootWebChannel.websiteToken;
   const visitor = window.authToken;
   // Chatwoot v4.18 constructs Widget API URLs from location.search. Supplying
