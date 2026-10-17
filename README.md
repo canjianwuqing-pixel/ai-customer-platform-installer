@@ -2,6 +2,107 @@
 
 一个面向 Ubuntu 服务器的模块化 AI 客服平台安装器项目。项目通过一个入口脚本完成 Chatwoot 基础部署，并可按需启用 AI Runtime 和统一 `/admin` 管理后台，为后续知识库等组件保留清晰的扩展边界。
 
+## 快速开始：一键安装与安全更新
+
+以下命令面向 **Ubuntu 22.04 / 24.04**。请先通过 SSH 进入服务器并取得 root 权限（如 `sudo -i`）；确认主域名的 DNS 已解析至服务器入口、公网 TCP 80/443 已放行。命令示例使用 `/opt/ai-customer-platform-installer` 作为安装目录；已部署到其他位置的服务器应沿用自己的实际路径，**不要再克隆一份新项目**。
+
+### 1. 首次一键安装：Chatwoot + AI Runtime + 统一后台
+
+仅适用于**全新服务器/全新安装目录**。在 root 终端复制以下整段：
+
+```bash
+apt-get update && apt-get install -y git ca-certificates && \
+mkdir -p /opt && cd /opt && \
+git clone https://github.com/canjianwuqing-pixel/ai-customer-platform-installer.git && \
+cd ai-customer-platform-installer && \
+install -m 600 .env.example .env && \
+sed -i 's/^ADMIN_ENABLED=false$/ADMIN_ENABLED=true/' .env && \
+bash install.sh
+```
+
+安装器会询问**网站主域名和管理员邮箱**，并按既有流程安装 Docker/Compose（需要时）、PostgreSQL、Redis、Chatwoot、Nginx、HTTPS、仓库内 AI Runtime 和统一 `/admin` 后台。`ADMIN_ENABLED=true` 会让安装器自动选用固定版本的本地 Runtime/Admin 构建标签；**仅执行默认的 `bash install.sh`（未启用 Admin）不等于安装完整 AI 客服平台**。安装完成后访问 `https://你的域名/admin`，首次账号为 `admin`，出厂初始密码为 `admin`，请**立即修改密码**；OpenAI/兼容模型及 API Key 可在后台配置。
+
+如果已有 `.env`、容器或数据卷，**不要重新运行上述克隆/初始化命令**，更不要覆盖旧 `.env`。备用域名、独立客服入口（如 `/support/kuaiyun/`）均在后台配置。
+
+### 2. 已有安装：安全更新 Git 源码并发布仓库内 AI 服务
+
+以下命令用于**已部署、已有 `.env` 的服务器**，不是首次安装，也不是 Chatwoot 镜像版本升级。操作前确认管理后台没有正在执行的备份、恢复、升级或域名维护任务；备份和容器重建可能短暂影响业务，建议在维护窗口操作。**先审核待更新提交**，命令要求输入 `UPDATE` 才继续：
+
+```bash
+cd /opt/ai-customer-platform-installer && (
+  set +x
+  set -Eeuo pipefail
+
+  test "$(git branch --show-current)" = master
+  test -z "$(git status --porcelain=v1 --untracked-files=all)"
+
+  git fetch origin master
+  git merge-base --is-ancestor HEAD origin/master
+  echo "===== 待更新提交 ====="
+  git log --oneline HEAD..origin/master
+  git diff --stat HEAD..origin/master
+
+  if test "$(git rev-parse HEAD)" = "$(git rev-parse origin/master)"; then
+    echo "当前源码已是最新版本"
+    exit 0
+  fi
+
+  read -r -p "确认已审核上述变更，输入 UPDATE 继续：" confirm
+  test "$confirm" = UPDATE
+
+  echo "===== 先备份 ====="
+  ./backup.sh
+  echo "===== 安全快进更新源码 ====="
+  git merge --ff-only origin/master
+
+  export INSTALLER_ROOT="$(pwd -P)"
+  source lib/common.sh
+  source lib/config.sh
+  source lib/validation.sh
+  source modules/docker/check.sh
+  source modules/ai-service/check.sh
+  config_load_installer_configuration "$INSTALLER_ROOT/.env"
+
+  if [[ "${AI_RUNTIME_BUILD:-false}" == true ]]; then
+    ai_service_initialize_config
+    ai_service_compose config --quiet
+    if [[ "${ADMIN_ENABLED:-false}" == true ]]; then
+      ai_service_compose build ai-service ai-admin
+      ai_service_compose up -d --no-deps ai-service ai-admin
+    else
+      ai_service_compose build ai-service
+      ai_service_compose up -d --no-deps ai-service
+    fi
+  else
+    echo "当前使用外部 AI 镜像或未启用仓库 Runtime，跳过本地 AI 镜像构建"
+  fi
+
+  nginx -t
+  healthy=0
+  for i in 1 2 3 4 5 6; do
+    if ./manage.sh health; then healthy=1; break; fi
+    sleep 5
+  done
+  test "$healthy" = 1
+  git log -1 --oneline
+)
+```
+
+这段更新**不执行 `docker compose down`、不清空数据库或数据卷、不重置凭据**。如果工作区不干净、分支不是 `master` 或远程历史不能快进，命令会停止；不要用 `git reset --hard` 或 `git clean -fd` 强行覆盖。备份只保存项目规定的必要数据，并非 Docker 镜像归档；在相同镜像标签上重新构建可能覆盖该标签的旧镜像，应在需要镜像级回滚时先规划独立版本标签。
+
+**区别：** `git fetch` + `git merge --ff-only` 只更新仓库文件；运行中的仓库内 Runtime/Admin 需要按上面步骤重新构建才会加载新代码。`./upgrade.sh` 用于**显式配置了不同固定镜像目标版本**的正式组件版本升级（会进行专门的备份、迁移和回滚记录），不是每次 Git 源码更新都要运行。涉及数据库结构、Nginx 模板、部署模式或外部镜像的变更，应先阅读对应提交/版本说明，不要假定上述通用源码更新覆盖所有迁移步骤。
+
+更新后常用检查：
+
+```bash
+cd /opt/ai-customer-platform-installer
+./manage.sh status
+./manage.sh health
+```
+
+如安装在 `/www1/ai-customer-platform-installer` 等其他目录，以上所有 `cd /opt/ai-customer-platform-installer` 均换成**原实际安装目录**。
+
+
 ## 当前阶段
 
 当前仓库支持主/备用网站域名、HTTPS 和独立在线客服入口，包括：
