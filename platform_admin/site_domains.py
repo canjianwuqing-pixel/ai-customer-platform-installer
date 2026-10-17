@@ -46,6 +46,20 @@ def hostname(value):
     return value
 
 
+def domain_check_location(template, nonce):
+    # An exact, unique SERVER-level slot in each owned template. Never locate
+    # insertion points by directive names: snippets can repeat those directives
+    # inside locations (e.g. the Webhook's client_max_body_size).
+    marker = "    # PLATFORM_DOMAIN_CHECK_LOCATION"
+    if nonce and (not isinstance(nonce, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", nonce)):
+        raise SiteError("invalid_domain_nonce")
+    rule = '    location = /.__platform-domain-check { return 200 "' + nonce + '"; }' if nonce else ""
+    rendered, count = re.subn(r"^" + re.escape(marker) + r"$", lambda _: rule, template, flags=re.M)
+    if count != 1:
+        raise SiteError("invalid_site_template")
+    return rendered
+
+
 def atomic(path, data, mode=0o600):
     path = Path(path)
     if any(p.is_symlink() for p in (path, *path.parents)):
@@ -160,9 +174,10 @@ class WebsiteDomains:
                               **self.certificate(r)} for r in value["domains"]]}
 
     def challenge(self, domain, nonce):
-        return ((self.root / "templates/domain/challenge.conf.template").read_text(encoding="utf-8")
+        template = (self.root / "templates/domain/challenge.conf.template").read_text(encoding="utf-8")
+        return (domain_check_location(template, nonce)
             .replace("{{DOMAIN}}", hostname(domain)).replace("{{NGINX_LISTEN_PORT}}", self.env["NGINX_LISTEN_PORT"])
-            .replace("{{CERTBOT_WEBROOT}}", self.env["WEBSITE_CERTBOT_WEBROOT"]).replace("{{NONCE}}", nonce))
+            .replace("{{CERTBOT_WEBROOT}}", self.env["WEBSITE_CERTBOT_WEBROOT"]))
 
     def render(self, registry, *, challenge="", nonce=""):
         validate_registry(registry)
@@ -191,8 +206,7 @@ class WebsiteDomains:
                 if self.env.get("AI_RUNTIME_BUILD") == "true":
                     snippet += (self.root / "templates/nginx/chatwoot-ai.conf.template").read_text(encoding="utf-8").replace("{{AI_RUNTIME_UPSTREAM_HOST}}", self.env["AI_SERVICE_BIND_ADDRESS"])
             site = site.replace("# PLATFORM_ADMIN_LOCATION", snippet)
-            if nonce:
-                site = site.replace("    client_max_body_size", '    location = /.__platform-domain-check { return 200 "' + nonce + '"; }\n    client_max_body_size')
+            site = domain_check_location(site, nonce)
             # The header parsing directive is inherited once in http context.
             site = re.sub(r"^underscores_in_headers on;\n", "", site, flags=re.M)
             for key, value in values.items():

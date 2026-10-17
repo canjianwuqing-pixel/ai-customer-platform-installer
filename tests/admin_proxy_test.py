@@ -185,7 +185,8 @@ class NginxHTTPSFixtures(unittest.TestCase):
         site = re.sub(r"^\s*listen \[::\]:[^;]+;", "", site, flags=re.MULTILINE)
         site = re.sub(r"listen (\d+)", r"listen 127.0.0.1:\1", site)
         config = self.directory / "nginx.conf"
-        config.write_text("daemon off;\nmaster_process off;\nerror_log stderr warn;\npid nginx.pid;\n"
+        master = getattr(self, "nginx_master_process", "off")
+        config.write_text("daemon off;\nmaster_process " + master + ";\nerror_log stderr warn;\npid nginx.pid;\n"
                           "events { worker_connections 64; }\nhttp { access_log off;\n"
                           "client_body_temp_path temp/client; proxy_temp_path temp/proxy;\n"
                           "fastcgi_temp_path temp/fastcgi; uwsgi_temp_path temp/uwsgi; scgi_temp_path temp/scgi;\n"
@@ -201,7 +202,10 @@ class NginxHTTPSFixtures(unittest.TestCase):
         process = subprocess.Popen(command, **options)
 
         def stop():
-            process.terminate()
+            if master == "on":
+                subprocess.run(command + ["-s", "quit"], cwd=self.directory, capture_output=True, check=True, timeout=10)
+            else:
+                process.terminate()
             process.wait(timeout=10)
 
         self.addCleanup(stop)

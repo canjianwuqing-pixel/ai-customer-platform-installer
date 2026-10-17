@@ -94,6 +94,40 @@ class WebsiteFixtures(unittest.TestCase):
                 self.assertEqual(self.host.site.read_bytes(), self.original)
                 self.assertFalse(self.host.path.exists())
 
+    def test_nonce_uses_only_unique_top_level_slot_not_repeated_body_directives(self):
+        nonce = secrets.token_hex(24)
+        content = self.host.render(self.host.read(), nonce=nonce)
+        self.assertEqual(content.count('location = /.__platform-domain-check'), 1)
+        self.assertIn('    location = /.__platform-domain-check', content)
+        webhook = content.split('location ~ "^/integrations/chatwoot/', 1)[1].split('    location / {', 1)[0]
+        self.assertNotIn('/.__platform-domain-check', webhook)
+        self.assertIn('client_max_body_size 1m;', webhook)
+        self.assertNotIn('PLATFORM_DOMAIN_CHECK_LOCATION', content)
+
+    def test_missing_duplicate_or_indented_slot_and_unsafe_nonce_fail_closed(self):
+        source = Path(self.host.env['DOMAIN_HTTPS_TEMPLATE_FILE']).read_text(encoding='utf-8')
+        marker = '    # PLATFORM_DOMAIN_CHECK_LOCATION'
+        self.assertEqual(source.splitlines().count(marker), 1)
+        candidate = self.directory / 'template.conf'
+        self.host.env['DOMAIN_HTTPS_TEMPLATE_FILE'] = str(candidate)
+        for modified in (source.replace(marker, ''), source.replace(marker, marker + '\n' + marker),
+                         source.replace(marker, '    ' + marker)):
+            with self.subTest(template=modified):
+                candidate.write_text(modified, encoding='utf-8')
+                with self.assertRaisesRegex(SiteError, '^invalid_site_template$'):
+                    self.host.render(self.host.read(), nonce=secrets.token_hex(24))
+        candidate.write_text(source, encoding='utf-8')
+        for nonce in ('"; return 500; #', 'a\nb', 'a' * 129):
+            with self.assertRaisesRegex(SiteError, '^invalid_domain_nonce$'):
+                self.host.render(self.host.read(), nonce=nonce)
+
+    def test_no_nonce_has_no_verification_location_in_tls_or_http_fallback(self):
+        for certificate in ('', 'certificate'):
+            self.host.fail = certificate
+            content = self.host.render(self.host.read(), challenge='pending.example.test')
+            self.assertNotIn('location = /.__platform-domain-check', content)
+            self.assertNotIn('PLATFORM_DOMAIN_CHECK_LOCATION', content)
+
     def test_primary_failover_delete_reinstall_restart_and_backup_restore(self):
         self.host.operation("add", "backup.example.test")
         backup = deepcopy(self.host.read())

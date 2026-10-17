@@ -19,6 +19,33 @@
 
 删除仅允许备用域名；当前主域名以及会导致没有可用主站的删除会被拒绝。若已有机器人回调或平台 API 连接使用待删备用域名，会先安全迁移到可用主域名并保留身份与凭据，再发布移除；失败保留原站点。删除不删除 lineage、私钥、Chatwoot 数据或实例数据，以免影响恢复/续签及审计。
 
+### 临时到达验证与模板约束
+
+HTTPS 模板和 HTTP-01 暂存模板各有唯一一行 `    # PLATFORM_DOMAIN_CHECK_LOCATION`，位于 `server {}` 顶层。仅有临时 nonce 时，此位置才生成精确匹配的 `/.__platform-domain-check`；正式配置和无 nonce 的 HTTP 证书恢复站点不生成该规则。它与 Admin、Support、WebSocket、Webhook location 平级。禁止按 `client_max_body_size` 等可重复指令定位插入点。自定义 HTTPS 模板也必须保留该唯一顶层占位符；缺少、重复或缩进不符合约定会拒绝渲染并保留原站点，不使用模糊插入兜底。
+
+`tests/website_nginx_test.py` 使用真实 Nginx `-t`、master/worker reload、临时 TLS 证书和一主多备虚拟主机，调用现有 `nginx_apply_candidate`，覆盖 HTTP 暂存、HTTPS 到达验证、nonce 清理、重复执行和语法/签发/访问失败回滚。签名 Webhook 经过实际生成的 Nginx location，再由现有 Runtime 校验和处理；错误签名及非 POST 仍被拒绝。DNS、Certbot 签发和外部 Chatwoot/OpenAI 为隔离协议 fixture，不代表公网 DNS 或真实证书签发验收。
+
+### 此渲染修复的安全更新
+
+先在后台确认没有进行中的维护任务，保存现有备份。待修复提交发布到远程后，在原项目目录以原服务器管理用户操作，工作区不干净或不能快进时停止：
+
+```bash
+(
+  set -e
+  test "$(git branch --show-current)" = master
+  test -z "$(git status --porcelain)"
+  git fetch origin master
+  git merge-base --is-ancestor HEAD origin/master
+  # 确认远程包含本次修复，再更新；备份失败则停止。
+  ./backup.sh
+  git merge --ff-only origin/master
+  sudo nginx -t
+  ./manage.sh health
+)
+```
+
+本修复仅改变宿主机域名渲染器及模板，不迁移数据库，不修改 `.env`、私钥、现有证书或管理员配置。现有维护执行器每次域名任务通过 `install.sh __website-domains` 启动新进程，直接读取更新后的代码和模板，因此仅为应用本修复**无需重新安装或重建任何业务容器，也无需中断维护执行器**。更新代码不会立即改写正在使用的站点；回到原 `/admin` 重试添加备用域名，任务会先验证暂存配置、按原流程签发证书及校验 HTTPS，全部成功后才发布，失败保留原站点。若远程还有其他版本变更，需先审阅这些变更并遵循相应升级说明。
+
 ## 主域名切换与故障恢复
 
 原主域名不可访问时，可通过已启用备用域名进入 `/admin`，设其为主域名。切换前重新验证目标域名 DNS、TLS 和访问。不会探测或依赖失效旧域名。

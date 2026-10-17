@@ -6,3 +6,4 @@ export PYTHONDONTWRITEBYTECODE=1
 "${ADMIN_TEST_PYTHON:-python3}" -m unittest discover -s "${TEST_ROOT}/tests" -p website_domains_test.py -v
 "${ADMIN_TEST_PYTHON:-python3}" -m unittest discover -s "${TEST_ROOT}/tests" -p support_test.py -v
 "${ADMIN_TEST_PYTHON:-python3}" -m unittest discover -s "${TEST_ROOT}/tests" -p website_proxy_test.py -v
+"${ADMIN_TEST_PYTHON:-python3}" -m unittest discover -s "${TEST_ROOT}/tests" -p website_nginx_test.py -v

@@ -32,6 +32,7 @@ server {
     ssl_session_timeout 1d;
 
     client_max_body_size {{NGINX_CLIENT_MAX_BODY_SIZE}};
+    # PLATFORM_DOMAIN_CHECK_LOCATION
     # PLATFORM_ADMIN_LOCATION
 
     location / {
