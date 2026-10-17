@@ -1,6 +1,32 @@
 {% extends "base.html" %}{% block content %}
-<h2>在线客服入口</h2><p class="hint">此设置仅选择所有网站 /support/ 使用的收件箱，不改变客服实例、模型或知识库配置。所有已启用域名均可访问同源的 /support/。</p>
-{% if saved %}<p class="notice success" role="status">默认在线客服收件箱已保存。</p>{% endif %}
+<h2>客服入口管理</h2>
+<p class="hint">每个平台使用独立链接、客服实例和 Chatwoot 网站收件箱。AI 模型、提示词和知识库继续由所选客服实例管理；共享知识配置档不共享实例正文。</p>
+{% if saved %}<p class="notice success" role="status">客服入口设置已保存。</p>{% endif %}
 {% if error %}<p class="notice error" role="alert">{{ error }}</p>{% endif %}
-<form method="post"><input type="hidden" name="csrf" value="{{ csrf }}"><label for="support-inbox">默认在线客服收件箱（必选）</label><select id="support-inbox" name="service_id" required><option value="">请选择网站收件箱</option>{% for row in state.options %}<option value="{{ row.service_id }}" {% if row.service_id == state.selected or (not state.selected and state.options|length == 1) %}selected{% endif %}>{{ row.name }} · {{ row.inbox_name }}</option>{% endfor %}</select><p class="hint">只有一个有效网站绑定时自动作为候选；多个绑定必须明确选择。先在 Chatwoot 接入页完成现有网站收件箱绑定。</p><div class="form-actions"><button>保存默认入口</button><a class="button secondary" href="/support/" target="_blank" rel="noopener">打开在线客服</a></div></form>
-{% endblock %}
+<div class="entry-list">
+{% for row in entries %}
+{% set option = options|selectattr('service_id','equalto',row.service_id)|first %}
+<section class="rules"><h3>{{ row.name }} {% if row.default %} · 默认客服{% endif %}</h3>
+<p>状态：{% if not row.enabled %}已停用{% elif not option %}连接需要检查{% elif not option.service_enabled %}客服实例已停用{% else %}已启用 · {% if option.ai_enabled %}AI 已启用{% else %}AI 已暂停（人工接待）{% endif %}{% endif %}</p>
+<p>客服实例：{{ row.service_id }}{% if option %} · {{ option.inbox_name }}{% endif %}</p>
+<p><a href="/support/{{ row.slug }}/" target="_blank" rel="noopener">/support/{{ row.slug }}/</a> <button type="button" class="secondary small" data-copy="/support/{{ row.slug }}/">复制客服链接</button></p>
+<div class="row-actions"><a href="/admin/support?edit={{ row.slug }}">编辑</a>
+<a href="/admin/edit/services/{{ row.service_id }}">配置模型、提示词及知识库</a>
+{% for action,label in [('toggle','启用' if not row.enabled else '停用'),('default','设为默认客服'),('delete','删除入口')] %}
+{% if not row.default or action == 'toggle' %}<form method="post"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="action" value="{{ action }}"><input type="hidden" name="slug" value="{{ row.slug }}"><button class="secondary small" {% if row.default or (action == 'default' and not row.enabled) %}disabled{% endif %}>{{ label }}</button></form>{% endif %}
+{% endfor %}</div></section>
+{% else %}<p>尚未添加独立入口。原有 /support/ 默认设置仍然保留。</p>{% endfor %}
+</div>
+<p id="copy-status" role="status" aria-live="polite"></p>
+<h3>{{ '编辑客服平台' if edit else '新增客服平台' }}</h3>
+<form method="post" id="entry-form"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="action" value="save"><input type="hidden" name="original_slug" value="{{ edit }}">
+<div class="form-grid"><div class="field"><label for="entry-name">平台名称（必填）</label><input id="entry-name" name="name" value="{{ record.name|default('') }}" maxlength="128" required></div>
+<div class="field"><label for="entry-slug">URL Slug（必填，唯一）</label><input id="entry-slug" name="slug" value="{{ record.slug|default('') }}" pattern="[a-z][a-z0-9]*(-[a-z0-9]+)*" maxlength="64" required><p class="hint">小写字母开头，可含数字和连字符。修改后旧链接将失效。</p></div>
+<div class="field wide"><label for="entry-service">客服实例 · Website Inbox（必选）</label><select id="entry-service" name="service_id" required><option value="">请选择已绑定的网站收件箱</option>{% for option in options %}<option value="{{ option.service_id }}" {% if option.service_id == record.service_id %}selected{% endif %}>{{ option.name }}（{{ option.service_id }}） · {{ option.inbox_name }} · AI：{{ option.ai_config or '未关联' }} · 提示词：{{ option.prompt_config or '未关联' }} · 知识库：{{ option.knowledge_config or '未关联' }}</option>{% endfor %}</select>
+<p class="hint">选项实时来自 Chatwoot API。请先在<a href="/admin/chatwoot">Chatwoot 接入</a>中连接并绑定现有 Website Inbox；每个独立平台使用不同的客服实例和收件箱。这里不会新建或删除 Chatwoot 收件箱。</p></div>
+<div class="field"><label class="switch-label"><input type="checkbox" name="enabled" value="true" {% if record.enabled %}checked{% endif %}>启用此入口</label></div></div>
+<div class="form-actions"><button>保存客服入口</button>{% if edit %}<a class="button secondary" href="/admin/support">返回列表</a>{% endif %}</div></form>
+<h3>兼容的默认入口 /support/</h3>
+<p class="hint">已有默认收件箱保持不变。可在上方将任意已启用入口设为默认；下方选择可恢复原有默认收件箱模式。独立链接始终精确匹配，未知或停用链接绝不会进入默认客服。</p>
+<form method="post"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="action" value="legacy-default"><label for="support-inbox">默认网站收件箱</label><select id="support-inbox" name="service_id" required><option value="">请选择网站收件箱</option>{% for row in state.options %}<option value="{{ row.service_id }}" {% if row.service_id == state.selected or (not state.selected and state.options|length == 1) %}selected{% endif %}>{{ row.name }} · {{ row.inbox_name }}</option>{% endfor %}</select><div class="form-actions"><button>保存默认入口</button><a class="button secondary" href="/support/" target="_blank" rel="noopener">打开默认在线客服</a></div></form>
+{% endblock %}{% block scripts %}<script src="/admin/assets/support-entries.js" defer></script>{% endblock %}

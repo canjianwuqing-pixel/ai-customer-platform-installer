@@ -47,6 +47,10 @@ with TestClient(application, headers={"authorization": "Bearer " + env["SERVICE_
             assert api.post("/management/chatwoot/" + service_id + "/bind", json={"inbox_id": inbox, "public_url": "https://platform.example.test"}).status_code == 200
         bridge = application.state.chatwoot
         assert api.put("/management/support-entry", json={"service_id": "service_a"}).status_code == 200
+        for sid, iid, slug in (("service_a", 7, "platform-a"), ("service_b", 8, "platform-b")):
+            assert api.post("/management/support-entries", json={"slug": slug, "name": "独立平台",
+                "service_id": sid, "account_id": 42, "inbox_id": iid, "enabled": True}).status_code == 201
+        assert api.post("/management/support-entries/platform-a/default").status_code == 200
         bridge.pause("service_a", 100, "visitor_requested_human")
         bridge.lifecycle("service_a", {"id": 100, "status": "resolved", "updated_at": time.time(), "messages": [{"id": 20}]})
         bridge.pause("service_b", 200)
@@ -54,6 +58,7 @@ with TestClient(application, headers={"authorization": "Bearer " + env["SERVICE_
             db.execute("INSERT INTO chatwoot_events(service_id,conversation_id,message_id,status,created_at) VALUES ('service_a',100,19,'sent',?)", (time.time(),))
     elif mode == "mutate":
         assert api.put("/management/support-entry", json={"service_id": "service_b"}).status_code == 200
+        assert api.delete("/management/support-entries/platform-b").status_code == 200
         for key in expected:
             base = "/management/services/" + key + "/knowledge"
             revision = api.get(base).json()["revision"]
@@ -69,6 +74,12 @@ with TestClient(application, headers={"authorization": "Bearer " + env["SERVICE_
         # process; the choice is in the existing backed-up Runtime volume.
         from ai_runtime.support_api import SupportEntry
         assert SupportEntry(application.state.chatwoot).selected() == "service_a"
+        from ai_runtime.support_entries import SupportEntries
+        entries = SupportEntries(application.state.chatwoot)
+        assert [(row["slug"], row["service_id"], row["inbox_id"]) for row in entries.read()] == [
+            ("platform-a", "service_a", 7), ("platform-b", "service_b", 8)]
+        with entries.store._connection() as db:
+            assert entries.default(db)["slug"] == "platform-a"
         for key, content in expected.items():
             result = api.get("/management/services/" + key + "/knowledge")
             assert result.status_code == 200

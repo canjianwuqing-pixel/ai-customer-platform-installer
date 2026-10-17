@@ -45,11 +45,11 @@ class SupportFixtures(unittest.TestCase):
             self.assertNotIn("api_access_token", request.headers)
             self.assertNotIn("authorization", request.headers)
             self.assertNotIn("cookie", request.headers)
-            self.assertEqual(request.headers["host"], "backup.example.test")
+            self.assertEqual(request.headers["host"], getattr(self, "expected_host", "backup.example.test"))
             self.assertEqual(request.headers["x-forwarded-proto"], "https")
             return httpx.Response(200, text='<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1">'
                 '<script>window.chatwootWebChannel={websiteToken:"' + request.url.params["website_token"] + '"};'
-                'window.authToken="native-visitor.jwt";</script><script type="module" src="/vite/assets/widget.js"></script>'
+                'window.authToken="' + ('native-visitor.jwt' if request.url.params["website_token"].endswith('-7') else 'other-visitor.jwt') + '";</script><script type="module" src="/vite/assets/widget.js"></script>'
                 '</head><body><div id="app" class="h-full"></div></body></html>')
 
         management = InternalClient("http://runtime.test", self.f.fixture.env["SERVICE_MANAGEMENT_TOKEN"], httpx.ASGITransport(app=self.f.app))
@@ -75,6 +75,17 @@ class SupportFixtures(unittest.TestCase):
         self.browser.cookies.set("platform_support_public-website-token-7", "native-visitor.jwt", domain="backup.example.test", path="/support/")
         self.browser.get("/support/")
         self.assertEqual(self.documents[-1].url.params["cw_conversation"], "native-visitor.jwt")
+
+    def test_widget_bootstrap_runs_before_chatwoot_module_initialization(self):
+        # v4.18 endPoints.js builds message/history URLs from location.search,
+        # NOT from window.chatwootWebChannel.websiteToken. A document 200 alone
+        # therefore says nothing about whether this native Widget can send.
+        document = self.browser.get("/support/").text
+        self.assertIn('<script src="/support/session.js"></script>', document)
+        script = (__import__('pathlib').Path(__file__).resolve().parents[1] /
+                  'platform_admin/static/support.js').read_text(encoding='utf-8')
+        self.assertIn('website_token', script)
+        self.assertIn('history.replaceState', script)
 
     def test_multiple_instances_require_explicit_default_and_preserve_isolation(self):
         self.f.model("model_b")

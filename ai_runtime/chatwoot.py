@@ -48,6 +48,11 @@ def server_url(value):
     return value.rstrip("/")
 
 
+def origin_identity(value):
+    parsed = urlsplit(value)
+    return parsed.scheme, parsed.hostname, parsed.port or {"http": 80, "https": 443}[parsed.scheme]
+
+
 def is_incoming(message, *, webhook=False):
     sender = message.get("sender") or {}
     contact = ((message.get("conversation") or {}).get("meta") or {}).get("sender") or {}
@@ -140,20 +145,38 @@ class ChatwootBridge:
             row = db.execute("SELECT * FROM chatwoot_bindings WHERE service_id=?", (service_id,)).fetchone()
             return dict(row) if row else None
 
-    def client(self, binding):
-        credentials = self.vault.get("chatwoot", binding["service_id"])
-        if not isinstance(credentials, dict):
-            raise RuntimeFailure("chatwoot_not_configured", 409)
+    def local_origins(self):
         # The platform's own Rails is reached over the private Docker network,
         # not through a possibly failed public primary DNS name. External
         # Chatwoot connections keep their explicitly configured URL.
-        local = {self.resolver.env.get("CHATWOOT_LOCAL_ORIGIN", "")}
+        local = {self.resolver.env.get("CHATWOOT_LOCAL_ORIGIN", "")} - {""}
         with self.store._connection() as db:
             if self._ready(db):
                 row = db.execute("SELECT config FROM runtime_profiles WHERE kind='website-origin' AND key='local'").fetchone()
                 if row:
-                    local = set(json.loads(row[0]))
-        if binding["base_url"] in local and self.resolver.env.get("CHATWOOT_INTERNAL_URL"):
+                    local = set(json.loads(row[0])) - {""}
+        return local
+
+    def require_unique_inbox(self, binding, inbox_id):
+        local = {origin_identity(value) for value in self.local_origins()}
+        current = origin_identity(binding["base_url"])
+        with self.store._connection() as db:
+            if not self._ready(db):
+                return
+            for sid, origin in db.execute("SELECT service_id,base_url FROM chatwoot_bindings WHERE account_id=? AND inbox_id=?",
+                                          (binding["account_id"], inbox_id)):
+                candidate = origin_identity(origin)
+                if sid != binding["service_id"] and (candidate == current or {candidate, current} <= local):
+                    raise RuntimeFailure("chatwoot_inbox_in_use", 409)
+
+    def is_local_origin(self, value):
+        return origin_identity(value) in {origin_identity(origin) for origin in self.local_origins()}
+
+    def client(self, binding):
+        credentials = self.vault.get("chatwoot", binding["service_id"])
+        if not isinstance(credentials, dict):
+            raise RuntimeFailure("chatwoot_not_configured", 409)
+        if self.is_local_origin(binding["base_url"]) and self.resolver.env.get("CHATWOOT_INTERNAL_URL"):
             binding = {**binding, "base_url": server_url(self.resolver.env["CHATWOOT_INTERNAL_URL"])}
         return ChatwootClient(binding, credentials, self.transport)
 
@@ -234,9 +257,7 @@ class ChatwootBridge:
             client = self.client(binding)
             if inbox_id not in {row["id"] for row in await self._inboxes(client)}:
                 raise RuntimeFailure("chatwoot_invalid_inbox", 422)
-            with self.store._connection() as db:
-                if db.execute("SELECT 1 FROM chatwoot_bindings WHERE base_url=? AND account_id=? AND inbox_id=? AND service_id<>?", (binding["base_url"], binding["account_id"], inbox_id, service_id)).fetchone():
-                    raise RuntimeFailure("chatwoot_inbox_in_use", 409)
+            self.require_unique_inbox(binding, inbox_id)
             existing = await client.call("GET", f"/inboxes/{inbox_id}/agent_bot")
             existing_id = (existing.get("agent_bot") or {}).get("id")
             if existing_id and existing_id != binding["bot_id"]:
@@ -393,12 +414,15 @@ class ChatwootBridge:
                 or not re.fullmatch(r"sha256=[a-f0-9]{64}", signature)
                 or not hmac.compare_digest(signature, "sha256=" + hmac.new(secret.encode(), timestamp.encode() + b"." + raw, hashlib.sha256).hexdigest())):
             raise RuntimeFailure("unauthorized", 401)
+        # Even previously saved connections using two aliases of the same local
+        # Chatwoot must never ambiguously route one inbox to two knowledge sets.
+        self.require_unique_inbox(binding, binding["inbox_id"])
         try:
             event = json.loads(raw)
             if not isinstance(event, dict):
                 raise ValueError
             if event.get("event") in {"conversation_resolved", "conversation_opened", "conversation_status_changed", "conversation_updated"}:
-                if event["account"]["id"] != binding["account_id"] or event["inbox_id"] != binding["inbox_id"]:
+                if identifier(event["account"]["id"]) != binding["account_id"] or identifier(event["inbox_id"]) != binding["inbox_id"]:
                     raise ValueError
                 if event["event"] == "conversation_updated" and not any(
                         set(item) & {"status", "assignee_id", "assignee_agent_bot_id", "ai_assignee_type"}
@@ -408,7 +432,9 @@ class ChatwootBridge:
             if event.get("event") != "message_created":
                 return {"status": "ignored"}
             conversation = event["conversation"]
-            if event["account"]["id"] != binding["account_id"] or conversation["inbox_id"] != binding["inbox_id"]:
+            if identifier(event["account"]["id"]) != binding["account_id"] or identifier(conversation["inbox_id"]) != binding["inbox_id"]:
+                raise ValueError
+            if "inbox" in event and identifier(event["inbox"]["id"]) != binding["inbox_id"]:
                 raise ValueError
             conversation_id, message_id = identifier(conversation["id"]), identifier(event["id"])
             if is_human(event):
@@ -496,6 +522,7 @@ class ChatwootBridge:
             return
         client = self.client(binding)
         try:
+            self.require_unique_inbox(binding, binding["inbox_id"])
             conversation = await client.conversation(cid)
             rows = await client.messages(cid, after=mid - 1)
             marker = f"{sid}:{cid}:{mid}"

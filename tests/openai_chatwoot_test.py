@@ -96,6 +96,11 @@ class ChatwootProtocol:
         if suffix.startswith("/inboxes/"):
             key = int(suffix.split("/")[2])
             if method == "GET":
+                if len(suffix.split("/")) == 3:
+                    if key not in self.inbox_names:
+                        return httpx.Response(404)
+                    return httpx.Response(200, json={"id": key, "name": self.inbox_names[key],
+                        "channel_type": "Channel::WebWidget", "website_token": "public-website-token-" + str(key)})
                 return httpx.Response(200, json={"agent_bot": self.bots.get(self.links.get(key), {})})
             self.links[key] = body["agent_bot"]
             return httpx.Response(200)

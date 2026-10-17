@@ -169,7 +169,7 @@ class MultiWebsiteProxyFixtures(unittest.TestCase):
                     self.assertTrue(page.evaluate("document.documentElement.scrollWidth<=innerWidth"))
                     page.screenshot(path=str(review / f"support-settings-{width}.png"), full_page=True)
                     page.goto(self.alias_origin + "/support/")
-                    page.wait_for_url(self.alias_origin + "/support/#/messages")
+                    page.wait_for_url(self.alias_origin + "/support/?website_token=public-website-fixture#/messages")
                     self.assertEqual(page.locator("iframe").count(), 0)
                     self.assertEqual(page.locator("button").count(), 0)
                     self.assertTrue(page.evaluate("window===window.top"))

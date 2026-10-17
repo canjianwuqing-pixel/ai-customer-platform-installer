@@ -123,7 +123,7 @@ def create_app(env=None, management=None, maintenance=None, *, widget_transport=
             response.headers["Content-Security-Policy"] = ("default-src 'self'; script-src 'self' 'unsafe-inline'; "
                 "style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; media-src 'self' blob:; "
                 "connect-src 'self' wss:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'")
-        if request.url.path in {"/admin/manage/knowledge", "/admin/knowledge"} or request.url.path.startswith("/admin/edit/ai/"):
+        if request.url.path in {"/admin/manage/knowledge", "/admin/knowledge", "/admin/support"} or request.url.path.startswith("/admin/edit/ai/"):
             response.headers["Content-Security-Policy"] += "; script-src 'self'"
         if request.url.path.startswith("/admin/edit/ai/"):
             response.headers["Content-Security-Policy"] += "; connect-src 'self'"

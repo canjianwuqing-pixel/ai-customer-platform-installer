@@ -11,7 +11,10 @@ SAFE_ERRORS = {"invalid_service_binding", "bound_service_is_disabled", "multiple
     "record_not_found", "invalid_request", "invalid_profile_configuration", "invalid_runtime_configuration",
     "invalid_default_service", "default_service_must_remain_enabled", "maintenance_rejected",
     "unknown_service_id", "knowledge_not_configured", "unsafe_knowledge_path", "knowledge_too_large",
-    "invalid_knowledge_content", "knowledge_conflict", "knowledge_storage_unavailable"} | set(ERRORS)
+    "invalid_knowledge_content", "knowledge_conflict", "knowledge_storage_unavailable",
+    "invalid_support_slug", "invalid_support_entry", "support_entry_not_found", "support_entry_disabled",
+    "support_default_protected", "support_entry_changed", "support_slug_in_use", "support_inbox_in_use",
+    "invalid_support_inbox", "support_requires_local_chatwoot"} | set(ERRORS)
 
 
 class InternalClient:

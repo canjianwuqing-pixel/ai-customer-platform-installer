@@ -6,7 +6,7 @@
 
 已启用的主/备用域名均提供同源的 Chatwoot、`/admin`、`/support/`、API、静态资源和 WebSocket。备用域名不跳回主域名。浏览器 Cookie 按域名隔离：首次在备用域名登录需要输入同一套管理员凭据；访客在同一域名刷新可延续会话，切换域名不共享访客 Cookie。
 
-在“在线客服入口设置”选择已绑定的网站收件箱。只有一个启用实例的网站绑定时自动作为候选；多个绑定必须明确选择。此设置不修改收件箱、AI 开关、模型、提示词、知识库和机器人。没有有效入口时 `/support/` 明确返回暂不可用（503），不会显示无法使用的假聊天界面。
+在“客服入口管理”选择默认网站收件箱，或创建独立 `/support/{slug}/` 平台入口。只有一个启用实例的网站绑定时可自动作为原默认候选；多个绑定必须明确选择。入口设置不修改收件箱、AI 开关、模型、提示词、知识库和机器人。未知 Slug 返回 404，已停用入口返回 410，绝不进入默认客服；连接异常返回 503。详见 [多平台客服入口](support-entries.md)。
 
 ## 域名生命周期
 
@@ -33,14 +33,14 @@
 
 - 网站域名清单：`ADMIN_MAINTENANCE_STATE_DIR/website-domains.json`（0600，目录 0700）。旧单域名从现有配置导入，发生正式网站操作后持久化。
 - 证书与私钥：继续保存在配置的 Certbot 目录，**不进入 Git 或备份包**。备份记录其路径和网站清单，而不是复制私钥。
-- `/support/` 选择与可信本地站点别名：复用 Runtime 数据卷的现有 SQLite 配置覆盖表，不改变历史表或 Schema 版本。现有数据卷备份会完整保存这些记录与凭据。
+- `/support/` 选择与可信本地站点别名继续复用 Runtime SQLite 配置覆盖表；独立客服入口由增量 Schema 5 的 `support_entries` 表保存。均在原 Runtime 数据卷内，现有备份完整保存这些记录与凭据，不修改 Chatwoot 数据库。
 - 重复安装和升级重新渲染注册的网站清单，不退回单域名。老备份不含网站清单时保留已有新清单。恢复前验证目标站点的 DNS、证书、TLS 与到达性；失败在停止服务或恢复数据库前退出。异机恢复必须先在该主机准备有效证书，不能用无效证书备份覆盖可访问站点。
 - 历史 `config/domains/`、`/management/domains`、`/admin/api/domains` 的“域名→实例”数据与 API 保留，不能自动当作网站清单签发证书。新主界面不再展示该概念。
 - Admin 与 Runtime 仅增加到既有 Chatwoot Docker 网络的私有连接，不向浏览器暴露管理 Token，不挂载 Docker Socket。
 
 ## `/support/` 实现与上游依据
 
-直接使用 Chatwoot **v4.18.0** 的 `/widget` HTML、Vue 应用与 `/messages` 原生路由，在浏览器顶层呈现，而非 SDK iframe/悬浮气泡。Admin 通过私网读取原生页面，仅增加视口高度和访客 Cookie 持续性脚本；不实现聊天协议，不查询或隐藏第三方 DOM 按钮。原生顶层模式不创建浮动气泡，关闭/弹出功能由上游组件自身的顶层模式控制。
+直接使用 Chatwoot **v4.18.0** 的 `/widget` HTML、Vue 应用与 `/messages` 原生路由，在浏览器顶层呈现，而非 SDK iframe/悬浮气泡。Admin 通过私网读取原生页面，在 Vue 模块执行前同步设置正确的公开 `website_token` 查询参数、视口和按 Token 隔离的访客 Cookie。v4.18 Widget 的消息/历史 API 从 `location.search` 读取 Token，不能只在后端 `/widget` 请求中传入，否则 HTML 200 但消息请求失败。不实现新聊天协议，不查询或隐藏第三方 DOM 按钮。原生顶层模式不创建浮动气泡，关闭/弹出功能由上游组件自身的顶层模式控制。
 
 公开页面只使用网站 `website_token` 与当前访客自己的签名会话；管理 Token、机器人 Token、Webhook Secret、OpenAI Key 不进入浏览器。静态资源、Widget API、ActionCable 都使用当前站点同源地址。视口脚本使用 `visualViewport` / `100dvh` 适配手机键盘，不添加导航和后台按钮。
 

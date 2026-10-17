@@ -73,14 +73,31 @@ class SupportEntry:
             db.execute("INSERT INTO runtime_profiles(kind,key,config) VALUES ('support-entry','default',?) ON CONFLICT(kind,key) DO UPDATE SET config=excluded.config", (json.dumps({"service_id": service_id}),))
         return {"status": "saved"}
 
-    async def public(self):
+    async def public(self, slug=None):
+        from .support_entries import SupportEntries
+        entries = SupportEntries(self.bridge)
+        with self.store._connection() as db:
+            default = entries.default(db)
+        # A named route is exact: unknown/disabled never falls back to default.
+        selected_slug = slug if slug is not None else default.get("slug")
+        if selected_slug is not None:
+            entry = entries.get(selected_slug)
+            if not entry["enabled"]:
+                raise RuntimeFailure("support_entry_disabled", 410)
+            entries.binding(entry)
+            selected = entry["service_id"]
+        else:
+            selected = ""
         services = self.store.read_services()
         candidates = [sid for sid, service in services.items() if service["enabled"]
                       and (self.bridge.binding(sid) or {}).get("inbox_id")]
-        selected = self.selected() or (candidates[0] if len(candidates) == 1 else "")
+        if selected_slug is not None and selected not in candidates:
+            raise RuntimeFailure("support_entry_disabled", 410)
+        selected = selected or self.selected() or (candidates[0] if len(candidates) == 1 else "")
         if selected not in candidates:
             raise RuntimeFailure("support_inbox_not_selected", 409)
         binding = self.bridge.binding(selected)
+        entries.binding({"service_id": selected, "account_id": binding["account_id"], "inbox_id": binding["inbox_id"]})
         inbox = await self.bridge.client(binding).call("GET", f"/inboxes/{binding['inbox_id']}")
         token = inbox.get("website_token")
         if (inbox.get("id") != binding["inbox_id"] or inbox.get("channel_type") != "Channel::WebWidget"
@@ -157,6 +174,10 @@ def support_router(bridge):
     @router.get("/support-entry/public")
     async def public():
         return await entry.public()
+
+    @router.get("/support-entry/public/{slug}")
+    async def named_public(slug: str):
+        return await entry.public(slug)
 
     @router.post("/website-origin")
     async def origin(body: OriginChange):

@@ -12,7 +12,7 @@ import stat
 from .config import RuntimeFailure, _boolean, _load_yaml, _text, validate_services
 
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 MIGRATIONS = {
     1: (
         """CREATE TABLE management_records (
@@ -47,6 +47,10 @@ MIGRATIONS = {
         "ALTER TABLE chatwoot_conversations ADD COLUMN awaiting_reopen INTEGER NOT NULL DEFAULT 0",
         "ALTER TABLE chatwoot_conversations ADD COLUMN generation INTEGER NOT NULL DEFAULT 0",
     ),
+    5: ("""CREATE TABLE support_entries (
+        slug TEXT PRIMARY KEY, name TEXT NOT NULL, service_id TEXT NOT NULL UNIQUE,
+        account_id INTEGER NOT NULL, inbox_id INTEGER NOT NULL,
+        enabled INTEGER NOT NULL CHECK (enabled IN (0,1)))""",),
 }
 DOMAIN_FIELDS = {"domain", "service_id", "enabled", "default_entry"}
 DNS_LABEL = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\Z")

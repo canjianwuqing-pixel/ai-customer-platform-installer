@@ -28,6 +28,8 @@
 
 网站备用域名、主域名故障切换和独立在线客服入口见 [网站多域名与 /support/ 使用及验收说明](docs/website-domains.md)。新“域名管理”页面管理整个平台站点和证书；历史域名→实例绑定数据及 API 继续兼容。
 
+统一后台“客服入口管理”支持多个独立 `/support/{slug}/` 链接。每个入口选择一个已绑定 Chatwoot Website Inbox 的客服实例，使用该实例现有模型、提示词与隔离知识正文；新增、编辑、启停、删除、默认客服及复制链接均可在网页完成。原 `/support/` 和默认收件箱选择保持兼容。操作及安全更新说明见 [多平台客服入口](docs/support-entries.md)。
+
 真实配置统一保存在本地 `.env` 文件中。首次执行 `bash install.sh` 时，安装向导会自动从 `.env.example` 创建权限为 `0600` 的 `.env`。普通安装只询问网站域名和管理员邮箱，不需要填写镜像、版本、密码、Token、OpenAI API Key 或模型名称。
 
 安装器按 `config/default.env`、`config/images.env`、`.env` 的顺序加载配置，后加载的用户配置优先。`config/images.env` 提供 Chatwoot、PostgreSQL 和 Redis 的固定版本，禁止使用 `latest`；`config/default.env` 保存非敏感运行参数。高级用户可以在 `.env` 中覆盖版本和镜像设置。

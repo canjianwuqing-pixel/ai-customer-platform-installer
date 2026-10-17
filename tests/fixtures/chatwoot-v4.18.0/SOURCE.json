@@ -11,6 +11,14 @@
     "app_listeners_base_listener.rb": "50db9ab0c06244e023d58b4b7dd01d9b9e2c4fa37745f535500ffa6af162bc76",
     "lib_webhooks_trigger.rb": "959ed3af1dfad92fc7540e16c45c2cf6811aeeac702f22ec17715d65a071a42f",
     "app_listeners_agent_bot_listener.rb": "cf733d9ade2e9ff4564e7f41deeeaede8e3a2a95edf7d4a5dbe0a6b4653088a3",
-    "app_models_message.rb": "b31b98c28bbe2fe6bed2b78d6cc2553830a9217236c179c78791e8b6c9cb7701"
+    "app_models_message.rb": "b31b98c28bbe2fe6bed2b78d6cc2553830a9217236c179c78791e8b6c9cb7701",
+    "widget_base_controller.rb": "c95879f0a7ad00aa716b0ee0aa02df9ce4e27e43550b840451992622c73f19d3",
+    "widget_endPoints.js": "02995e160e33637bcd7056c88d264502b34cf85653485409c335696e43bad5fc",
+    "widget_urlParamsHelper.js": "1c6af665e5d0d8b78132e2dad53ab068bcff56f5286c102387e0a93ebb717211"
+  },
+  "additional_source_paths": {
+    "widget_base_controller.rb": "app/controllers/api/v1/widget/base_controller.rb",
+    "widget_endPoints.js": "app/javascript/widget/api/endPoints.js",
+    "widget_urlParamsHelper.js": "app/javascript/widget/helpers/urlParamsHelper.js"
   }
 }

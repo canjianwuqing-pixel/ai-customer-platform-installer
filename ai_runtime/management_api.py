@@ -125,6 +125,8 @@ def management_router(resolver, *, provider=None, bridge=None) -> APIRouter:
         router.include_router(management_routes(bridge))
         from .support_api import support_router
         router.include_router(support_router(bridge))
+        from .support_entries import entries_router
+        router.include_router(entries_router(bridge))
     from .knowledge import KnowledgeStore, MAX_CONTENT_BYTES
     knowledge = KnowledgeStore(resolver)
 
