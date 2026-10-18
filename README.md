@@ -15,10 +15,15 @@ apt-get update && apt-get install -y git ca-certificates && \
 mkdir -p /opt && cd /opt && \
 git clone https://github.com/canjianwuqing-pixel/ai-customer-platform-installer.git && \
 cd ai-customer-platform-installer && \
+(test -f .env.example || git restore --source=HEAD --worktree -- .env.example) && \
+test -f .env.example && test ! -e .env && \
 install -m 600 .env.example .env && \
 sed -i 's/^ADMIN_ENABLED=false$/ADMIN_ENABLED=true/' .env && \
+grep -qx 'ADMIN_ENABLED=true' .env && \
 bash install.sh
 ```
+
+如果命令显示 `install: cannot stat '.env.example'`，代表安装还未开始：正常的 Git 仓库已跟踪该文件，但本机工作树中缺失。上面的命令会先尝试从当前 Git 提交恢复该模板；若仍失败，暂停安装，执行 `git status --short --untracked-files=all`、`git ls-files --error-unmatch .env.example`、`git rev-parse HEAD` 检查后再处理，不要手工使用 `config/default.env` 替代模板。若目录内已有 `.env`，安全检查会直接停止，**绝不自动覆盖现有密钥**。
 
 安装器会询问**网站主域名和管理员邮箱**，并按既有流程安装 Docker/Compose（需要时）、PostgreSQL、Redis、Chatwoot、Nginx、HTTPS、仓库内 AI Runtime 和统一 `/admin` 后台。`ADMIN_ENABLED=true` 会让安装器自动选用固定版本的本地 Runtime/Admin 构建标签；**仅执行默认的 `bash install.sh`（未启用 Admin）不等于安装完整 AI 客服平台**。安装完成后访问 `https://你的域名/admin`，首次账号为 `admin`，出厂初始密码为 `admin`，请**立即修改密码**；OpenAI/兼容模型及 API Key 可在后台配置。
 
