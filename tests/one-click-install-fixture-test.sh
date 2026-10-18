@@ -35,7 +35,14 @@ grep -qx 'ADMIN_ENABLED=true' .env
 printf 'healthy\n' >.fixture-healthy
 STUB
 ( cd "${scratch}/source" && git add . && git commit --quiet -m 'fake clean install repo' )
+# Reproduce production GitHub: unrelated EMPTY main is the repository default,
+# while the installer and .env.example are on master.
+git -C "${scratch}/source" switch --quiet --orphan main
+git -C "${scratch}/source" commit --quiet --allow-empty -m 'empty default main'
+test "$(git -C "${scratch}/source" rev-parse 'HEAD^{tree}')" = 4b825dc642cb6eb9a060e54bf8d69288fbee4904
+git -C "${scratch}/source" switch --quiet master
 git clone --bare --quiet "${scratch}/source" "${scratch}/origin.git"
+git --git-dir="${scratch}/origin.git" symbolic-ref HEAD refs/heads/main
 
 # Redirect the fixed GitHub URL to a private local test repository without
 # giving the production bootstrap any alternate-repository parameter.
@@ -69,6 +76,48 @@ test -f "${scratch}/partial/.env.example"
 test -f "${scratch}/partial/.fixture-installed"
 test -z "$(git -C "${scratch}/partial" status --porcelain=v1 --untracked-files=all | grep '^ D .env.example' || true)"
 printf '[OK] tracked template can be restored after interrupted clone\n'
+
+# Reproduce the user's failure: old README cloned default (empty) main.
+# The bootstrap must safely switch that pristine repo to installer master.
+git clone --quiet 'https://github.com/canjianwuqing-pixel/ai-customer-platform-installer.git' "${scratch}/main-empty"
+test "$(git -C "${scratch}/main-empty" branch --show-current)" = main
+test ! -e "${scratch}/main-empty/.env.example"
+old_main="$(git -C "${scratch}/main-empty" rev-parse HEAD)"
+printf 'chat.example.test\nadmin@example.test\n' | AI_CUSTOMER_INSTALL_DIR="${scratch}/main-empty" bash "${BOOTSTRAP_SCRIPT}"
+test "$(git -C "${scratch}/main-empty" branch --show-current)" = master
+test "$(git -C "${scratch}/main-empty" rev-parse refs/heads/main)" = "${old_main}"
+test -f "${scratch}/main-empty/.fixture-installed"
+test -f "${scratch}/main-empty/.fixture-healthy"
+test "$(stat -c %a "${scratch}/main-empty/.env")" = 600
+printf '[OK] previously cloned empty default main safely switches to full installer master\n'
+
+# Main must be completely empty and clean; do not discard local work.
+git clone --quiet 'https://github.com/canjianwuqing-pixel/ai-customer-platform-installer.git' "${scratch}/main-dirty"
+printf 'keep me\n' > "${scratch}/main-dirty/user-notes.txt"
+if AI_CUSTOMER_INSTALL_DIR="${scratch}/main-dirty" bash "${BOOTSTRAP_SCRIPT}" >"${scratch}/main-dirty.log" 2>&1; then
+  printf 'ERROR: dirty default main clone was not rejected\n' >&2
+  exit 1
+fi
+test ! -e "${scratch}/main-dirty/.env"
+test -f "${scratch}/main-dirty/user-notes.txt"
+test "$(git -C "${scratch}/main-dirty" branch --show-current)" = main
+printf '[OK] main with untracked user content remains untouched\n'
+
+# A nonempty main tree must never be implicitly replaced with master.
+git -C "${scratch}/source" switch --quiet main
+printf 'legacy project\n' > "${scratch}/source/legacy.txt"
+git -C "${scratch}/source" add legacy.txt
+git -C "${scratch}/source" commit --quiet -m 'nonempty main'
+git -C "${scratch}/source" switch --quiet master
+git --git-dir="${scratch}/origin.git" fetch --quiet "${scratch}/source" +refs/heads/main:refs/heads/main
+git clone --quiet 'https://github.com/canjianwuqing-pixel/ai-customer-platform-installer.git' "${scratch}/main-nonempty"
+if AI_CUSTOMER_INSTALL_DIR="${scratch}/main-nonempty" bash "${BOOTSTRAP_SCRIPT}" >"${scratch}/main-nonempty.log" 2>&1; then
+  printf 'ERROR: nonempty main branch was automatically switched\n' >&2
+  exit 1
+fi
+test ! -e "${scratch}/main-nonempty/.env"
+test -f "${scratch}/main-nonempty/legacy.txt"
+printf '[OK] nonempty main refused; existing files preserved\n'
 
 # Never overwrite a checkout with uncommitted changes.
 git clone --quiet --branch master --single-branch \
