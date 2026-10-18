@@ -6,28 +6,26 @@
 
 以下命令面向 **Ubuntu 22.04 / 24.04**。请先通过 SSH 进入服务器并取得 root 权限（如 `sudo -i`）；确认主域名的 DNS 已解析至服务器入口、公网 TCP 80/443 已放行。命令示例使用 `/opt/ai-customer-platform-installer` 作为安装目录；已部署到其他位置的服务器应沿用自己的实际路径，**不要再克隆一份新项目**。
 
-### 1. 首次一键安装：Chatwoot + AI Runtime + 统一后台
+### 1. 首次一键安装：仅需一条命令
 
-仅适用于**全新服务器/全新安装目录**。在 root 终端复制以下整段：
+适用于 **Ubuntu 22.04 / 24.04 新服务器**。请先在 SSH 中执行 `sudo -i` 进入 root 终端，确认要使用的域名已经指向该服务器，公网 TCP 80/443 可访问。然后**只复制并执行下面这一行**：
 
 ```bash
-apt-get update && apt-get install -y git ca-certificates && \
-mkdir -p /opt && cd /opt && \
-git clone https://github.com/canjianwuqing-pixel/ai-customer-platform-installer.git && \
-cd ai-customer-platform-installer && \
-(test -f .env.example || git restore --source=HEAD --worktree -- .env.example) && \
-test -f .env.example && test ! -e .env && \
-install -m 600 .env.example .env && \
-sed -i 's/^ADMIN_ENABLED=false$/ADMIN_ENABLED=true/' .env && \
-grep -qx 'ADMIN_ENABLED=true' .env && \
-bash install.sh
+( set -Eeuo pipefail; apt-get update; apt-get install -y curl git ca-certificates; f="$(mktemp)"; trap 'rm -f "$f"' EXIT; curl -fsSL https://raw.githubusercontent.com/canjianwuqing-pixel/ai-customer-platform-installer/master/one-click-install.sh -o "$f"; bash "$f" )
 ```
 
-如果命令显示 `install: cannot stat '.env.example'`，代表安装还未开始：正常的 Git 仓库已跟踪该文件，但本机工作树中缺失。上面的命令会先尝试从当前 Git 提交恢复该模板；若仍失败，暂停安装，执行 `git status --short --untracked-files=all`、`git ls-files --error-unmatch .env.example`、`git rev-parse HEAD` 检查后再处理，不要手工使用 `config/default.env` 替代模板。若目录内已有 `.env`，安全检查会直接停止，**绝不自动覆盖现有密钥**。
+这是真正的首次部署入口 `one-click-install.sh`，会自动：
 
-安装器会询问**网站主域名和管理员邮箱**，并按既有流程安装 Docker/Compose（需要时）、PostgreSQL、Redis、Chatwoot、Nginx、HTTPS、仓库内 AI Runtime 和统一 `/admin` 后台。`ADMIN_ENABLED=true` 会让安装器自动选用固定版本的本地 Runtime/Admin 构建标签；**仅执行默认的 `bash install.sh`（未启用 Admin）不等于安装完整 AI 客服平台**。安装完成后访问 `https://你的域名/admin`，首次账号为 `admin`，出厂初始密码为 `admin`，请**立即修改密码**；OpenAI/兼容模型及 API Key 可在后台配置。
+- 安装命令所需的基础依赖、下载项目到 `/opt/ai-customer-platform-installer`；
+- 从**当前 Git 提交**读取受版本控制的配置模板，安全创建权限为 `0600` 的 `.env`，自动启用 `ADMIN_ENABLED=true`，不要求手工复制或编辑模板；
+- 调用现有 `install.sh` 完成 Docker/Compose、PostgreSQL、Redis、Chatwoot、AI Runtime、统一 Admin、Nginx 和 Let's Encrypt HTTPS 部署；
+- 最后运行健康检查，只有安装器及健康检查均返回成功才显示完成。
 
-如果已有 `.env`、容器或数据卷，**不要重新运行上述克隆/初始化命令**，更不要覆盖旧 `.env`。备用域名、独立客服入口（如 `/support/kuaiyun/`）均在后台配置。
+**安装过程中只需要按提示输入主域名、管理员邮箱。** 完成后访问 `https://你的域名/admin`，出厂管理员用户名/密码为 `admin` / `admin`，必须尽快修改。安装完成**不等于 AI 模型已接入**；OpenAI/兼容模型 API Key、客服实例、Chatwoot 收件箱等在后台另行配置。
+
+**失败保护：** 下载失败会停止，不会用空脚本假装安装成功；如先前克隆成功但 `.env.example` 丢失，且项目目录中还没有 `.env`，引导脚本会验证 Git 来源、分支和工作区，恢复受跟踪模板并安全继续。**如果已有 `.env` 或目录中存在未提交更改，会拒绝初始化，不覆盖旧密码、数据库或服务。** 不要在已运行的生产环境再次使用首次安装命令，更新请看下一节。
+
+不要把该命令简化成 `curl ... | bash`：安装向导需要从 SSH 终端读取域名及邮箱，上面的命令保留了交互式输入，并在下载失败时明确退出。联网、域名解析和 Let's Encrypt 验证依赖实际环境，无法保证所有外部条件都始终成功。可先[查看一键安装脚本](one-click-install.sh)；离线启动/安全保护测试位于 `tests/one-click-install-fixture-test.sh`。
 
 ### 2. 已有安装：安全更新 Git 源码并发布仓库内 AI 服务
 
